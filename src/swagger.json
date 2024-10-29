@@ -1,0 +1,1673 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Code Compiler API",
+    "version": "1.0.0",
+    "description": "API for code compilation and execution"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5000/api"
+    }
+  ],
+  "paths": {
+    "/admins/profile": {
+      "get": {
+        "summary": "Get admin profile",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Admin profile retrieved successfully" },
+          "401": { "description": "Unauthorized" },
+          "403": { "description": "Access denied. Admin privileges required." }
+        }
+      },
+      "put": {
+        "summary": "Update admin profile",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Admin profile updated successfully" },
+          "401": { "description": "Unauthorized" },
+          "400": { "description": "Admin profile update failed" }
+        }
+      }
+    },
+    "/admins/change-password": {
+      "put": {
+        "summary": "Change admin password",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string" },
+                  "newPassword": { "type": "string" }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": { "description": "Password changed successfully" },
+            "400": { "description": "Current password is incorrect" },
+            "401": { "description": "Unauthorized" }
+          }
+        }
+      }
+    },
+    "/admins/users": {
+      "get": {
+        "summary": "Get all users",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Users retrieved successfully" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Failed to retrieve users" }
+        }
+      },
+      "post": {
+        "summary": "Create new user (Admin)",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "email", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User created successfully" },
+          "400": { "description": "Invalid input or user already exists" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/admins/users/{id}/promote": {
+      "post": {
+        "summary": "Promote user to admin",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "User promoted to admin successfully" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/admins/users/{id}": {
+      "get": {
+        "summary": "Get user by ID",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "User retrieved successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Failed to retrieve user" }
+        }
+      },
+      "put": {
+        "summary": "Update user by ID",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "User updated successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Failed to update user" }
+        }
+      },
+      "delete": {
+        "summary": "Delete user by ID",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "User deleted successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Failed to delete user" }
+        }
+      }
+    },
+    "/admins/transactions": {
+      "get": {
+        "summary": "Get all transactions",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Transactions retrieved successfully" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Failed to retrieve transactions" }
+        }
+      }
+    },
+    "/admins/grant-credits": {
+      "post": {
+        "summary": "Grant credits to a user",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["userId", "credits"],
+                "properties": {
+                  "userId": { "type": "string" },
+                  "credits": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credits granted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "user": { "type": "object" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/admins/promotions": {
+      "post": {
+        "summary": "Create a new promotion",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["offerName", "credits", "startDate", "endDate"],
+                "properties": {
+                  "offerName": { "type": "string" },
+                  "credits": { "type": "integer" },
+                  "startDate": { 
+                    "type": "string", 
+                    "format": "date-time",
+                    "example": "2023-06-01T00:00:00Z"
+                  },
+                  "endDate": { 
+                    "type": "string", 
+                    "format": "date-time",
+                    "example": "2023-12-31T23:59:59Z"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Promotion created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "promotion": { "type": "object" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      },
+      "get": {
+        "summary": "Get all promotions",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Promotions retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "offerName": { "type": "string" },
+                      "credits": { "type": "integer" },
+                      "startDate": { "type": "string", "format": "date-time" },
+                      "endDate": { "type": "string", "format": "date-time" },
+                      "userCount": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/admins/promotions/{promotionId}": {
+      "put": {
+        "summary": "Update a promotion",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "promotionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID of the promotion to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "credits": { 
+                    "type": "integer",
+                    "description": "New credit amount for the promotion"
+                  },
+                  "startDate": { 
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "New start date for the promotion"
+                  },
+                  "endDate": { 
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "New end date for the promotion"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Promotion updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "promotion": { 
+                      "type": "object",
+                      "properties": {
+                        "offerName": { "type": "string" },
+                        "credits": { "type": "integer" },
+                        "startDate": { "type": "string", "format": "date-time" },
+                        "endDate": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Promotion not found" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/admins/api-usage-stats": {
+      "get": {
+        "summary": "Get API usage statistics",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "startDate",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Start date for filtering (YYYY-MM-DD)"
+          },
+          {
+            "in": "query",
+            "name": "endDate",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "End date for filtering (YYYY-MM-DD)"
+          },
+          {
+            "in": "query",
+            "name": "userId",
+            "schema": {
+              "type": "string"
+            },
+            "description": "User ID for filtering"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API usage statistics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "totalCalls": { "type": "integer" },
+                        "languageStats": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "_id": { "type": "string" },
+                              "count": { "type": "integer" }
+                            }
+                          }
+                        },
+                        "mostUsedLanguage": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+
+    "/admins/user-statistics": {
+      "get": {
+        "summary": "Get user statistics",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "User statistics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "totalUsers": { "type": "integer" },
+                        "usersByPlan": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "_id": { "type": "string" },
+                              "count": { "type": "integer" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+
+    "/admins/subscription-metrics": {
+      "get": {
+        "summary": "Get subscription metrics",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Subscription metrics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "activeSubscriptions": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+
+    "/admins/top-users": {
+      "get": {
+        "summary": "Get top users",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 10
+            },
+            "description": "Number of top users to retrieve"
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "schema": {
+              "type": "string",
+              "enum": ["usage", "revenue"],
+              "default": "usage"
+            },
+            "description": "Criteria to sort users by"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top users retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "_id": { "type": "string" },
+                          "totalUsage": { "type": "integer" },
+                          "totalRevenue": { "type": "number" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+
+    "/admins/dashboard-stats": {
+      "get": {
+        "summary": "Get dashboard statistics",
+        "tags": ["Admin"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Dashboard statistics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "daily": {
+                          "type": "object",
+                          "properties": {
+                            "apiCalls": { "type": "integer" },
+                            "newUsers": { "type": "integer" },
+                            "revenue": { "type": "number" }
+                          }
+                        },
+                        "weekly": {
+                          "type": "object",
+                          "properties": {
+                            "apiCalls": { "type": "integer" },
+                            "newUsers": { "type": "integer" },
+                            "revenue": { "type": "number" }
+                          }
+                        },
+                        "monthly": {
+                          "type": "object",
+                          "properties": {
+                            "apiCalls": { "type": "integer" },
+                            "newUsers": { "type": "integer" },
+                            "revenue": { "type": "number" }
+                          }
+                        },
+                        "topLanguages": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "_id": { "type": "string" },
+                              "count": { "type": "integer" }
+                            }
+                          }
+                        },
+                        "mostUsedLanguage": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/register": {
+      "post": {
+        "summary": "Register new user",
+        "tags": ["User"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "email", "password"],
+                "properties": {
+                  "username": { "type": "string" },
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User registered successfully" },
+          "400": { "description": "Invalid email domain or user already exists" },
+          "500": { "description": "User registration failed" }
+        }
+      }
+    },
+    "/users/login": {
+      "post": {
+        "summary": "User login",
+        "tags": ["User"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["emailOrUsername", "password"],
+                "properties": {
+                  "emailOrUsername": { "type": "string" },
+                  "password": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "User logged in successfully" },
+          "401": { "description": "Invalid credentials" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/profile": {
+      "get": {
+        "summary": "Get user profile",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User profile retrieved successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
+        }
+      },
+      "patch": {
+        "summary": "Update user profile",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "username": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "User profile updated successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/change-password": {
+      "put": {
+        "summary": "Change user password",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["currentPassword", "newPassword"],
+                "properties": {
+                  "currentPassword": { "type": "string" },
+                  "newPassword": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Password changed successfully" },
+          "400": { "description": "Current password is incorrect" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/payment-validation": {
+      "post": {
+        "summary": "Validate user's payment method",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["paymentMethodId"],
+                "properties": {
+                  "paymentMethodId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Payment method validated successfully" },
+          "400": { "description": "Invalid payment method" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/client-credentials": {
+      "get": {
+        "summary": "Get user's client credentials",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Client credentials retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "clientId": { "type": "string" },
+                    "clientSecret": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Client credentials not found" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/credits": {
+      "get": {
+        "summary": "Get user credits information",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "User credits retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "planCredits": {
+                      "type": "string",
+                      "description": "Number of credits from the user's plan, or 'Unlimited' for yearly plans"
+                    },
+                    "promotionalCredits": {
+                      "type": "integer",
+                      "description": "Number of promotional credits"
+                    },
+                    "purchasedCredits": {
+                      "type": "integer",
+                      "description": "Number of purchased credits"
+                    },
+                    "totalCredits": {
+                      "type": "string",
+                      "description": "Total number of available credits, or 'Unlimited' for yearly plans"
+                    },
+                    "subscriptionPlan": {
+                      "type": "string",
+                      "description": "Current subscription plan"
+                    },
+                    "subscriptionEnd": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "End date of the current subscription, null for free plans"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/users/delete-account": {
+      "delete": {
+        "summary": "Delete user account",
+        "tags": ["User"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Account deleted successfully" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/contact": {
+      "post": {
+        "summary": "Submit contact form",
+        "tags": ["Contact"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "email", "message"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "email": { "type": "string" },
+                  "message": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { 
+            "description": "Contact message sent successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },    
+    "/wallet/credit-spent": {
+      "get": {
+        "summary": "Get credits spent today",
+        "tags": ["Wallet"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Credits spent information retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "used": {
+                      "type": "integer",
+                      "description": "Number of credits used today"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized - User not logged in" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/wallet/balance": {
+      "get": {
+        "summary": "Get wallet balance",
+        "tags": ["Wallet"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Wallet balance retrieved successfully" },
+          "400": { "description": "Failed to retrieve wallet balance" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/wallet/addbalance": {
+      "post": {
+        "summary": "Add balance to wallet",
+        "tags": ["Wallet"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["amountInRupees"],
+                "properties": {
+                  "amountInRupees": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Balance added successfully" },
+          "400": { "description": "Failed to add balance" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/wallet/transactions": {
+      "get": {
+        "summary": "Get wallet transactions",
+        "tags": ["Wallet"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Transactions retrieved successfully" },
+          "400": { "description": "Failed to retrieve transactions" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+    "/wallet/purchase-credits": {
+      "post": {
+        "summary": "Purchase credits",
+        "tags": ["Wallet"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["credits"],
+                "properties": {
+                  "credits": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Credits purchased successfully or Razorpay order created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "message": { "type": "string" },
+                        "purchasedCredits": { "type": "number" },
+                        "balance": { "type": "number" }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "message": { "type": "string" },
+                        "razorpayOrder": { "type": "object" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Failed to purchase credits" }
+        }
+      }
+    },
+    "/subscription/status": {
+    "get": {
+      "summary": "Get subscription status",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "responses": {
+        "200": {
+          "description": "Subscription status retrieved successfully",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionStatus"
+              }
+            }
+          }
+        },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "Server error" }
+      }
+    }
+  },
+  "/subscription/history": {
+    "get": {
+      "summary": "Get subscription history",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "responses": {
+        "200": {
+          "description": "Subscription history retrieved successfully",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SubscriptionHistory"
+                }
+              }
+            }
+          }
+        },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "An error occurred while fetching subscription history" }
+      }
+    }
+  },
+  "/subscription/plans": {
+    "get": {
+      "summary": "Get all subscription plans with details",
+      "tags": ["Subscription"],
+      "responses": {
+        "200": {
+          "description": "All plans retrieved successfully",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PlanDetails"
+                }
+              }
+            }
+          }
+        },
+        "500": { "description": "Server error" }
+      }
+    }
+  },
+  "/subscription/plans/{plan_id}/create-razorpay-order": {
+    "post": {
+      "summary": "Create a Razorpay order for subscription",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "responses": {
+        "200": { "description": "Razorpay order created successfully" },
+        "400": { "description": "Invalid plan ID" },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "Server error" }
+      }
+    }
+  },
+  "/subscription/verify-razorpay-payment": {
+    "post": {
+      "summary": "Verify Razorpay payment for subscription",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["razorpay_order_id", "razorpay_payment_id", "razorpay_signature"],
+              "properties": {
+                "razorpay_order_id": { "type": "string" },
+                "razorpay_payment_id": { "type": "string" },
+                "razorpay_signature": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": { "description": "Payment verified successfully" },
+        "400": { "description": "Invalid signature" },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "Server error" }
+      }
+    }
+  },
+  "/subscription/plans/{plan_id}/upgrade": {
+    "post": {
+      "summary": "Upgrade to a plan",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "parameters": [
+        {
+          "name": "plan_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "responses": {
+        "200": { "description": "Subscription upgraded successfully" },
+        "400": { "description": "Invalid plan or insufficient balance" },
+        "401": { "description": "Unauthorized" }
+      }
+    }
+  },
+  "/subscription/plans/{plan_id}/downgrade": {
+      "post": {
+        "summary": "Downgrade subscription",
+        "tags": ["Subscription"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "plan_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subscription downgraded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "subscription": { "$ref": "#/components/schemas/SubscriptionStatus" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid plan or downgrade not allowed" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+  "/subscription/payment-method": {
+    "put": {
+      "summary": "Update payment method",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "requestBody": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["paymentMethodId"],
+              "properties": {
+                "paymentMethodId": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "responses": {
+        "200": { "description": "Payment method updated successfully" },
+        "400": { "description": "Bad request" },
+        "401": { "description": "Unauthorized" }
+      }
+    }
+  },
+  "/subscription/cancel": {
+    "post": {
+      "summary": "Cancel current subscription",
+      "tags": ["Subscription"],
+      "security": [{ "bearerAuth": [] }],
+      "responses": {
+        "200": { "description": "Subscription cancelled successfully" },
+        "404": { "description": "No active subscription found" },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "Server error" }
+      }
+    }
+  },
+    "/execute/languages": {
+      "get": {
+        "summary": "Get supported languages",
+        "tags": ["Execution"],
+        "responses": {
+          "200": {
+            "description": "Supported languages retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "languages": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/execute": {
+      "post": {
+        "summary": "Execute code",
+        "tags": ["Execution"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["language", "code", "input"],
+                "properties": {
+                  "language": { "type": "string" },
+                  "code": { "type": "string" },
+                  "input": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Code executed successfully" },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
+        }
+      }
+    },
+    "/usage": {
+      "get": {
+        "summary": "Get overall usage statistics",
+        "tags": ["Usage"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Overall usage statistics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "totalExecutions": { "type": "integer" },
+                    "totalCreditsUsed": { "type": "integer" },
+                    "languageBreakdown": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "language": { "type": "string" },
+                          "count": { "type": "integer" },
+                          "totalCreditsUsed": { "type": "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "An error occurred while fetching usage data" }
+        }
+      }
+    },
+    "/usage/language/{language}": {
+      "get": {
+        "summary": "Get usage statistics for a specific language",
+        "tags": ["Usage"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "language",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Language-specific usage statistics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "language": { "type": "string" },
+                    "count": { "type": "integer" },
+                    "totalCreditsUsed": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "No usage data found for this language" },
+          "500": { "description": "An error occurred while fetching language usage data" }
+        }
+      }
+    },
+    "/usage/api-analytics/usage": {
+      "get": {
+        "summary": "Get API usage analytics",
+        "tags": ["Usage"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "API usage analytics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "calls": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "An error occurred while fetching API usage analytics" }
+        }
+      }
+    },
+    "/usage/api-analytics/languages": {
+      "get": {
+        "summary": "Get language analytics",
+        "tags": ["Usage"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Language analytics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": { "type": "string" },
+                      "value": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "An error occurred while fetching language analytics" }
+        }
+      }
+    },
+    "/usage/api-analytics/performance": {
+      "get": {
+        "summary": "Get performance analytics",
+        "tags": ["Usage"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Performance analytics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "time": { "type": "string" },
+                      "responseTime": { "type": "number" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "An error occurred while fetching performance analytics" }
+        }
+      }
+    },
+    "/analytics/data": {
+      "get": {
+        "summary": "Get analytics data",
+        "description": "Retrieve analytics data. Admins see all data, users see their own data only.",
+        "tags": ["Analytics"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "interval",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "24h", "weekly", "monthly"],
+              "example": "1h"
+            },
+            "description": "Time interval for data aggregation"
+          },
+          {
+            "in": "query",
+            "name": "start_time",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "example": "2024-03-01T00:00:00Z"
+            },
+            "description": "Start time for data range (ISO 8601 format)"
+          },
+          {
+            "in": "query",
+            "name": "end_time",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "example": "2024-03-02T00:00:00Z"
+            },
+            "description": "End time for data range (ISO 8601 format)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Analytics data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "timeRange": {
+                      "type": "object",
+                      "properties": {
+                        "start": { "type": "string", "format": "date-time" },
+                        "end": { "type": "string", "format": "date-time" },
+                        "interval": { "type": "string" }
+                      }
+                    },
+                    "executionMetrics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "_id": { "type": "object" },
+                          "totalExecutions": { "type": "integer" },
+                          "successfulExecutions": { "type": "integer" },
+                          "failedExecutions": { "type": "integer" },
+                          "averageExecutionTime": { "type": "number" },
+                          "creditsUsed": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "transactionMetrics": {
+                      "description": "Only visible to admin users",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "_id": { "type": "object" },
+                          "totalTransactions": { "type": "integer" },
+                          "totalAmount": { "type": "integer" },
+                          "totalCredits": { "type": "integer" }
+                        }
+                      }
+                    },
+                    "subscriptionMetrics": {
+                      "description": "Only visible to admin users",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "_id": { "type": "object" },
+                          "newSubscriptions": { "type": "integer" },
+                          "activeSubscriptions": { "type": "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized - Authentication required" },
+          "403": { "description": "Forbidden - Invalid credentials" },
+          "500": { "description": "Server error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Plan": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "creditsPerDay": { "type": "number" },
+          "price": { "type": "number" },
+          "duration": { "type": "number" }
+        }
+      },
+      "PlanDetails": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "creditsPerDay": { "type": "number" },
+          "price": { "type": "number" },
+          "duration": { "type": "number" },
+          "totalCredits": { "type": "number" },
+          "paymentMethods": { 
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "termsAndConditions": { "type": "string" }
+        }
+      },
+      "SubscriptionHistory": {
+        "type": "object",
+        "properties": {
+          "plan": { "type": "string" },
+          "status": { "type": "string", "enum": ["Active", "Inactive", "Cancelled", "Expired"] },
+          "startDate": { "type": "string", "format": "date-time" },
+          "endDate": { "type": "string", "format": "date-time" },
+          "creditsPerDay": { "type": "number" },
+          "cancelledAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SubscriptionStatus": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["Active", "Inactive", "Cancelled", "Expired"] },
+          "plan": { "type": "string" },
+          "startDate": { "type": "string", "format": "date-time" },
+          "endDate": { "type": "string", "format": "date-time" },
+          "creditsPerDay": { "type": "number" },
+          "remainingCredits": { "type": "number" },
+          "cancelledAt": { "type": "string", "format": "date-time" },
+          "message": { "type": "string" }
+        }
+      },
+      "ClientCredentials": {
+        "type": "object",
+        "properties": {
+          "clientId": { "type": "string" },
+          "clientSecret": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}
