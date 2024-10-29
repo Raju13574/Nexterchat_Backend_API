@@ -78,35 +78,69 @@ exports.addBalance = async (req, res) => {
 
 exports.getTransactions = async (req, res) => {
   try {
-    // Remove any limit on the number of transactions
     const transactions = await Transaction.find({ user: req.user._id })
       .sort({ createdAt: -1 })
       .lean();
 
-    const formattedTransactions = transactions.map(transaction => ({
-      id: transaction._id,
-      type: transaction.type,
-      description: transaction.description,
-      amountInRupees: transaction.amountInPaisa / 100,
-      formattedAmount: transaction.type === 'deposit' 
-        ? `+₹${(transaction.amountInPaisa / 100).toFixed(2)}` 
-        : `-₹${(transaction.amountInPaisa / 100).toFixed(2)}`,
-      credits: transaction.credits || 0,
-      status: transaction.status || 'completed',
-      formattedDate: new Date(transaction.createdAt).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      })
-    }));
+    const formattedTransactions = transactions.map(transaction => {
+      // Create date object once for all date formatting
+      const date = new Date(transaction.createdAt);
+      
+      return {
+        id: transaction._id,
+        type: transaction.type,
+        description: transaction.description,
+        amountInRupees: transaction.amountInPaisa / 100,
+        formattedAmount: transaction.type === 'deposit' 
+          ? `+₹${(transaction.amountInPaisa / 100).toFixed(2)}` 
+          : `-₹${(transaction.amountInPaisa / 100).toFixed(2)}`,
+        credits: transaction.credits || 0,
+        status: transaction.status || 'completed',
+        
+        // Detailed date information
+        createdAt: date,
+        formattedDate: date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        // Additional date formats
+        shortDate: date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'short'
+        }),
+        fullDate: date.toLocaleDateString('en-IN', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
+        }),
+        time: date.toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }),
+        // Relative time (e.g., "2 hours ago")
+        relativeTime: getRelativeTimeString(date),
+        
+        // Additional transaction details
+        category: getTransactionCategory(transaction.type),
+        icon: getTransactionIcon(transaction.type),
+        statusColor: getStatusColor(transaction.status)
+      };
+    });
+
+    // Group transactions by date
+    const groupedTransactions = groupTransactionsByDate(formattedTransactions);
 
     res.json({
       success: true,
       transactions: formattedTransactions,
-      totalCount: transactions.length
+      groupedTransactions,
+      totalCount: transactions.length,
+      summary: getTransactionsSummary(formattedTransactions)
     });
   } catch (error) {
     console.error('Error in getTransactions:', error);
@@ -116,6 +150,78 @@ exports.getTransactions = async (req, res) => {
     });
   }
 };
+
+// Helper functions
+function getRelativeTimeString(date) {
+  const now = new Date();
+  const diffInSeconds = Math.floor((now - date) / 1000);
+
+  if (diffInSeconds < 60) return 'Just now';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+  return date.toLocaleDateString('en-IN');
+}
+
+function getTransactionCategory(type) {
+  const categories = {
+    deposit: 'Wallet Deposit',
+    credit_purchase: 'Credit Purchase',
+    code_execution: 'Code Execution',
+    subscription: 'Subscription',
+    refund: 'Refund'
+  };
+  return categories[type] || 'Other';
+}
+
+function getTransactionIcon(type) {
+  const icons = {
+    deposit: 'dollar-sign',
+    credit_purchase: 'shopping-cart',
+    code_execution: 'code',
+    subscription: 'star',
+    refund: 'refresh-cw'
+  };
+  return icons[type] || 'activity';
+}
+
+function getStatusColor(status) {
+  const colors = {
+    completed: 'green',
+    pending: 'yellow',
+    failed: 'red',
+    processing: 'blue'
+  };
+  return colors[status] || 'gray';
+}
+
+function groupTransactionsByDate(transactions) {
+  const groups = {};
+  
+  transactions.forEach(transaction => {
+    const date = transaction.createdAt.toLocaleDateString('en-IN');
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(transaction);
+  });
+
+  return groups;
+}
+
+function getTransactionsSummary(transactions) {
+  return {
+    totalDeposits: transactions
+      .filter(t => t.type === 'deposit')
+      .reduce((sum, t) => sum + t.amountInRupees, 0),
+    totalSpent: transactions
+      .filter(t => t.type !== 'deposit')
+      .reduce((sum, t) => sum + t.amountInRupees, 0),
+    totalCredits: transactions
+      .reduce((sum, t) => sum + (t.credits || 0), 0),
+    transactionCount: transactions.length
+  };
+}
 
 async function recalculateUserBalanceAndCredits(userId) {
   const user = await User.findById(userId);
@@ -203,56 +309,74 @@ exports.getCreditSpent = async (req, res) => {
 exports.purchaseCredits = async (req, res) => {
   try {
     const { credits } = req.body;
-    if (!credits || credits <= 0) {
-      return res.status(400).json({ error: 'Invalid credit amount' });
+    
+    // Validate credit amount
+    if (!credits || isNaN(credits)) {
+      return res.status(400).json({ 
+        error: true,
+        message: 'Please enter a valid number of credits.'
+      });
+    }
+
+    if (credits < 200) {
+      return res.status(400).json({ 
+        error: true,
+        message: 'Minimum purchase is 200 credits.'
+      });
     }
 
     const user = await User.findById(req.user._id);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ 
+        error: true,
+        message: 'User not found' 
+      });
     }
 
-    // 1 credit costs ₹0.50 (50 paisa)
     const costInPaisa = credits * 50;
-
-    if (user.balanceInPaisa >= costInPaisa) {
-      user.balanceInPaisa -= costInPaisa;
-      user.credits.purchased += parseInt(credits);
-      await user.save();
-
-      const transaction = await Transaction.create({
-        user: user._id,
-        type: 'credit_purchase',
-        amountInPaisa: costInPaisa,
-        credits: parseInt(credits),
-        description: `Purchased ${credits} credits for ₹${(costInPaisa/100).toFixed(2)} (₹0.50 per credit)`
-      });
-
-      return res.json({
-        message: 'Credits purchased successfully',
-        newBalanceInRupees: user.balanceInPaisa / 100,
-        formattedBalance: `₹${(user.balanceInPaisa/100).toFixed(2)}`,
-        purchasedCredits: user.credits.purchased,
-        costPerCredit: 0.50,
-        transaction: {
-          id: transaction._id,
-          amountInPaisa: transaction.amountInPaisa,
-          credits: transaction.credits,
-          description: transaction.description
-        }
-      });
-    } else {
+    if (user.balanceInPaisa < costInPaisa) {
       return res.status(400).json({ 
-        error: 'Insufficient balance',
-        message: `You need ₹${(costInPaisa/100).toFixed(2)} to purchase ${credits} credits. Your current balance is ₹${(user.balanceInPaisa/100).toFixed(2)}.`,
-        requiredAmountInPaisa: costInPaisa,
-        currentBalanceInPaisa: user.balanceInPaisa,
-        costPerCredit: 0.50
+        error: true,
+        message: `Insufficient balance. You need ₹${(costInPaisa/100).toFixed(2)} to purchase ${credits} credits. Your current balance is ₹${(user.balanceInPaisa/100).toFixed(2)}.`
       });
     }
+
+    // Process purchase
+    user.balanceInPaisa -= costInPaisa;
+    if (!user.credits) {
+      user.credits = { purchased: 0, free: 15 };
+    }
+    user.credits.purchased += parseInt(credits);
+    await user.save();
+
+    // Create transaction record
+    const transaction = await Transaction.create({
+      user: user._id,
+      type: 'credit_purchase',
+      amountInPaisa: costInPaisa,
+      credits: parseInt(credits),
+      description: `Purchased ${credits} credits for ₹${(costInPaisa/100).toFixed(2)} (₹0.50 per credit)`,
+      status: 'completed'
+    });
+
+    return res.json({
+      success: true,
+      message: `Successfully purchased ${credits} credits`,
+      newBalanceInRupees: user.balanceInPaisa / 100,
+      purchasedCredits: {
+        total: user.credits.purchased,
+        remaining: user.credits.purchased,
+        used: 0
+      },
+      transaction: transaction
+    });
+
   } catch (error) {
     console.error('Purchase credits error:', error);
-    res.status(500).json({ error: 'Failed to process credit purchase', details: error.message });
+    res.status(500).json({ 
+      error: true,
+      message: 'An error occurred while processing your purchase. Please try again.' 
+    });
   }
 };
 
@@ -281,9 +405,9 @@ exports.getPurchasedCredits = async (req, res) => {
 
     res.json({
       purchasedCredits: {
-        total: user.paidCredits,
-        used: 0,  // You'll need to calculate this based on your business logic
-        remaining: user.paidCredits
+        total: user.credits?.purchased || 0,
+        remaining: user.credits?.purchased || 0,
+        used: 0
       }
     });
   } catch (error) {
