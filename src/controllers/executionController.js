@@ -21,18 +21,38 @@ exports.executeCode = async (req, res) => {
     const result = await codeExecutionService.execute(language, code, input);
     const executionTime = Date.now() - startTime;
     
-    // Create single execution record here
-    await Execution.create({
+    // Determine status based on result
+    const status = result.error ? 'failed' : 'success';
+    
+    // Convert result to string format for storage
+    const outputString = result.error 
+      ? `Error: ${result.error}`
+      : String(result.result || result.output || '');
+
+    // Create execution record
+    const execution = new Execution({
       user: req.user._id,
       language,
       code,
       input: input || '',
-      output: result.result || '',
-      error: result.error || '',
-      status: result.error ? 'failed' : 'completed',
-      executionTime,
-      creditSource: req.creditSource || 'free'
+      output: outputString,
+      status: status,
+      error: result.error ? String(result.error) : null,
+      executionTime: parseFloat((executionTime / 1000).toFixed(3)),
+      creditsUsed: 1,
+      creditSource: req.creditSource,
+      subscriptionId: req.subscription?._id,
+      subscriptionPlan: req.subscription?.plan
     });
+    
+    await execution.save();
+
+    if (result.error) {
+      return res.status(400).json({ 
+        error: result.error,
+        executionTime: `${(executionTime / 1000).toFixed(3)} seconds`
+      });
+    }
 
     return res.json({ 
       result: result.result || result.output || '', 
@@ -42,6 +62,28 @@ exports.executeCode = async (req, res) => {
 
   } catch (error) {
     console.error('Execution error:', error);
+    
+    // Try to save error execution record
+    try {
+      const execution = new Execution({
+        user: req.user._id,
+        language: req.body.language,
+        code: req.body.code,
+        input: req.body.input || '',
+        output: `Error: ${error.message}`,
+        status: 'failed',
+        error: String(error.message),
+        executionTime: 0,
+        creditsUsed: 1,
+        creditSource: req.creditSource,
+        subscriptionId: req.subscription?._id,
+        subscriptionPlan: req.subscription?.plan
+      });
+      await execution.save();
+    } catch (saveError) {
+      console.error('Failed to save error execution:', saveError);
+    }
+
     return res.status(500).json({ 
       error: 'Code execution failed',
       details: error.message

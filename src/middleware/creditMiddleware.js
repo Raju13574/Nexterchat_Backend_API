@@ -22,15 +22,24 @@ const checkCredits = async (req, res, next) => {
       endDate: { $gt: new Date() }
     }).sort({ startDate: -1 });
 
-    // Check if user has an active paid subscription
+    // STEP 1: Check if user has yearly plan
+    if (subscription && subscription.plan === 'yearly') {
+      // For yearly plan:
+      // - Set credit source as subscription
+      // - Mark as unlimited credits
+      // - Skip all other credit checks
+      req.creditSource = 'subscription';
+      req.subscription = subscription;
+      req.unlimitedCredits = true;  // This flag tells system to not deduct any credits
+      return next();
+    }
+
+    // STEP 2: If not yearly plan, check other credit sources
     if (subscription && subscription.plan !== 'free') {
-      // 1. First check subscription plan credits
+      // Check regular subscription credits
       const executionsToday = await Execution.countDocuments({
         user: user._id,
-        createdAt: { 
-          $gte: today,
-          $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
-        },
+        createdAt: { $gte: today },
         creditSource: 'subscription'
       });
 
@@ -40,7 +49,7 @@ const checkCredits = async (req, res, next) => {
         return next();
       }
 
-      // 2. Then check purchased credits
+      // Only check purchased credits if not on yearly plan
       if (user.credits.purchased > 0) {
         req.creditSource = 'purchased';
         return next();
@@ -108,43 +117,30 @@ const checkCredits = async (req, res, next) => {
     return res.status(403).json({ 
       success: false,
       error: 'No credits available',
-      message: subscription?.plan === 'free' ? 
-        'Please purchase credits or upgrade your subscription plan' :
-        'Daily subscription credits exhausted. Please purchase additional credits or wait for tomorrow.',
-      upgradeLink: '/api/subscription/plans'
+      message: 'Please purchase credits or upgrade to yearly plan for unlimited executions'
     });
 
   } catch (error) {
     console.error('Credit check error:', error);
-    return res.status(500).json({ 
-      success: false,
-      error: 'Failed to check credits'
-    });
+    return res.status(500).json({ error: 'Failed to check credits' });
   }
 };
 
 const deductCredit = async (req, res, next) => {
   try {
-    if (req.skipCreditDeduction) {
-      return next();
+    // IMPORTANT: Skip deduction for yearly plan users
+    if (req.unlimitedCredits) {
+      return next();  // Don't deduct any credits for yearly plan
     }
 
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(403).json({ 
-        success: false,
-        error: 'User not found' 
-      });
-    }
-
-    // Only track credit source, don't create execution record here
+    // For other plans, deduct credits based on source
     switch (req.creditSource) {
       case 'subscription':
-      case 'free':
-        // These are tracked by execution records in executionController
+        // No deduction needed for subscription credits
         break;
 
       case 'purchased':
+        // Only deduct purchased credits if not on yearly plan
         user.credits.purchased -= 1;
         await user.save();
         break;
@@ -171,10 +167,7 @@ const deductCredit = async (req, res, next) => {
     next();
   } catch (error) {
     console.error('Credit deduction error:', error);
-    return res.status(500).json({ 
-      success: false,
-      error: 'Failed to deduct credit'
-    });
+    return res.status(500).json({ error: 'Failed to deduct credit' });
   }
 };
 

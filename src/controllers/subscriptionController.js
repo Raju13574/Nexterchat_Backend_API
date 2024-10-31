@@ -372,23 +372,22 @@ const getStatus = async (req, res) => {
       active: true 
     });
 
-    // Get today's executions
+    // Get today's executions only after subscription start time
     const todayUsed = await Execution.countDocuments({
       user: userId,
       createdAt: { 
-        $gte: today,
+        $gte: subscription ? subscription.startDate : today, // Only count executions after new subscription started
         $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
       }
     });
 
-    // Calculate remaining credits
     const creditsPerDay = subscription ? subscription.creditsPerDay : 15;
     const remainingCredits = Math.max(0, creditsPerDay - todayUsed);
 
     const response = {
       success: true,
       plan: subscription ? subscription.plan : 'free',
-      status: 'active',
+      status: subscription ? subscription.status : 'active',
       creditsPerDay: creditsPerDay,
       startDate: subscription ? subscription.startDate : today,
       endDate: subscription ? subscription.endDate : new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000),
@@ -542,11 +541,32 @@ const upgrade = async (req, res) => {
     // Check balance
     const user = await User.findById(userId);
     if (user.balanceInPaisa < newPlan.priceInPaisa) {
+      // Create transaction record
+      const transaction = await Transaction.create({
+        user: userId,
+        type: 'subscription_upgrade',
+        amountInPaisa: newPlan.priceInPaisa,
+        description: `Failed to upgrade to ${plan_id} plan - Insufficient balance`,
+        status: 'failed',
+        credits: 0
+      });
+
+      const shortfall = newPlan.priceInPaisa - user.balanceInPaisa;
+      
       return res.status(400).json({ 
         success: false, 
         error: 'Insufficient balance',
         required: newPlan.priceInPaisa / 100,
-        current: user.balanceInPaisa / 100
+        current: user.balanceInPaisa / 100,
+        timestamp: new Date().toISOString(),
+        transactionId: transaction._id,
+        details: {
+          planRequested: plan_id,
+          priceInRupees: `₹${newPlan.priceInPaisa / 100}`,
+          walletBalance: `₹${user.balanceInPaisa / 100}`,
+          shortfall: `₹${shortfall / 100}`
+        },
+        message: "Please add funds to your wallet to upgrade your subscription."
       });
     }
 

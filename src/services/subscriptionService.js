@@ -228,54 +228,63 @@ exports.upgradeSubscription = async (userId, newPlanId) => {
     const newPlan = plans.find(p => p.id === newPlanId);
     if (!newPlan) throw new Error('Invalid plan selected');
 
-    // Get today's date for resetting execution count
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Deduct balance from wallet
+    user.balanceInPaisa -= newPlan.priceInPaisa;
+    await user.save();
 
-    // 1. Deactivate old subscription
+    // Create transaction record for the upgrade payment
+    await Transaction.create({
+      user: userId,
+      type: 'subscription_upgrade',
+      amountInPaisa: -newPlan.priceInPaisa, // Negative amount for deduction
+      description: `Upgraded from ${oldSubscription?.plan || 'free'} to ${newPlanId} plan`,
+      status: 'completed'
+    });
+
+    // Deactivate old subscription
     if (oldSubscription) {
       oldSubscription.active = false;
       oldSubscription.status = 'upgraded';
       await oldSubscription.save();
     }
 
-    // 2. Create new subscription with FULL credits
+    // Create new subscription
+    const now = new Date();
     const newSubscription = await Subscription.create({
       user: userId,
       plan: newPlanId,
       priceInPaisa: newPlan.priceInPaisa,
       creditsPerDay: newPlan.creditsPerDay,
-      startDate: new Date(),
-      endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+      startDate: now,
+      endDate: new Date(now.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
       active: true
     });
 
-    // 3. IMPORTANT: Delete today's execution records to reset count
-    await Execution.deleteMany({
-      user: userId,
-      createdAt: { 
-        $gte: today,
-        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
-      }
-    });
-
-    // 4. Update user's subscription
+    // Update user's subscription
     user.activeSubscription = newSubscription._id;
-    user.subscriptionPlan = newPlanId;
     await user.save();
 
-    // 5. Create upgrade transaction record
-    await Transaction.create({
-      user: userId,
-      type: 'subscription_upgrade',
-      amountInPaisa: newPlan.priceInPaisa,
-      description: `Upgraded from ${oldSubscription?.plan || 'free'} to ${newPlanId} plan`,
-      status: 'completed'
-    });
+    // Mark previous executions
+    await Execution.updateMany(
+      {
+        user: userId,
+        createdAt: { 
+          $gte: new Date(now.setHours(0, 0, 0, 0)),
+          $lt: now
+        }
+      },
+      {
+        $set: { 
+          previousPlan: oldSubscription?.plan || 'free',
+          creditSource: 'previous_plan'
+        }
+      }
+    );
 
     return {
       success: true,
-      newSubscription
+      newSubscription,
+      walletBalance: user.balanceInPaisa / 100 // Return updated wallet balance
     };
   } catch (error) {
     throw error;
@@ -303,12 +312,6 @@ exports.checkAndUpdateCredits = async (userId) => {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  // Get today's executions
-  const executionsToday = await Execution.countDocuments({
-    user: userId,
-    createdAt: { $gte: today }
-  });
-
   // Check subscription status
   const subscription = await Subscription.findOne({ 
     user: userId, 
@@ -316,31 +319,34 @@ exports.checkAndUpdateCredits = async (userId) => {
     endDate: { $gt: now }
   });
 
-  if (subscription) {
-    // Handle unlimited credits for yearly plan
-    if (subscription.plan === 'yearly') {
-      return { canExecute: true, creditsRemaining: 'Unlimited' };
-    }
-
-    const creditsRemaining = subscription.creditsPerDay - executionsToday;
-    return {
-      canExecute: creditsRemaining > 0,
-      creditsRemaining
+  // If user has yearly plan, don't count executions or deduct credits
+  if (subscription && subscription.plan === 'yearly') {
+    return { 
+      canExecute: true, 
+      creditsRemaining: 'Unlimited',
+      creditSource: 'subscription' // Force using subscription credits for yearly plan
     };
   }
 
-  // Handle free plan
-  const freeCreditsRemaining = 15 - executionsToday;
-  return {
-    canExecute: freeCreditsRemaining > 0,
-    creditsRemaining: freeCreditsRemaining
-  };
+  // For other plans, continue with normal credit checking...
+  const executionsToday = await Execution.countDocuments({
+    user: userId,
+    createdAt: { $gte: today }
+  });
+
+  // Rest of the logic for non-yearly plans...
 };
 
 exports.deductCredit = async (userId) => {
   const user = await User.findById(userId).populate('activeSubscription');
   if (!user) throw new CustomError('User not found', 404);
 
+  // If yearly plan, don't deduct any credits
+  if (user.activeSubscription && user.activeSubscription.plan === 'yearly') {
+    return; // No credit deduction needed for yearly plan
+  }
+
+  // Otherwise continue with normal credit deduction logic...
   if (user.activeSubscription && user.activeSubscription.plan !== 'free') {
     user.activeSubscription.remainingCredits = Math.max(0, user.activeSubscription.remainingCredits - 1);
     await user.activeSubscription.save();
