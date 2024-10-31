@@ -6,46 +6,33 @@ const executionSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  language: {
+  creditSource: {
     type: String,
+    enum: ['free', 'subscription', 'purchased', 'granted', 'promotional'],
     required: true
   },
   code: {
     type: String,
     required: true
   },
-  input: {
+  language: {
     type: String,
-    default: ''
+    required: true
   },
-  output: {
-    type: String,
-    default: ''
-  },
+  input: String,
+  output: String,
+  error: String,
   status: {
     type: String,
-    enum: ['success', 'error', 'failed'],
-    required: true,
-    default: 'success'
-  },
-  error: {
-    type: String
+    enum: ['pending', 'completed', 'failed'],
+    default: 'completed'
   },
   executionTime: {
     type: Number,
-    required: true,
     default: 0
-  },
-  creditsUsed: {
-    type: Number,
-    required: true,
-    default: 1
-  },
-  creditSource: {
-    type: String,
-    enum: ['free', 'purchased', 'granted'], // Add adminGranted to allowed sources
-    required: true
   }
-}, { timestamps: true });
+}, {
+  timestamps: true
+});
 
 module.exports = mongoose.model('Execution', executionSchema);

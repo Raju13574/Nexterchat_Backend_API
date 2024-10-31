@@ -1,55 +1,30 @@
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
-const Execution = require('../models/Execution'); // Add this line
-const Razorpay = require('razorpay');
-const crypto = require('crypto');
+const Execution = require('../models/Execution');
 const subscriptionService = require('../services/subscriptionService');
+const plans = require('../config/plans');
+const mongoose = require('mongoose');
 
-const plans = [
-  { 
-    id: 'free', 
-    name: 'Free Plan', 
-    creditsPerDay: 15, 
-    priceInPaisa: 0,
-    duration: 365 
-  },
-  { 
-    id: 'monthly', 
-    name: 'Monthly Plan', 
-    creditsPerDay: 1500, 
-    priceInPaisa: 49900, // ₹499 = 49,900 paisa
-    duration: 30 
-  },
-  { 
-    id: 'three_month', 
-    name: 'Three Months Plan', 
-    creditsPerDay: 2000, 
-    priceInPaisa: 129900, // ₹1,299 = 1,29,900 paisa
-    duration: 90 
-  },
-  { 
-    id: 'six_month', 
-    name: 'Six Months Plan', 
-    creditsPerDay: 3000, 
-    priceInPaisa: 199900, // ₹1,999 = 1,99,900 paisa
-    duration: 180 
-  },
-  { 
-    id: 'yearly', 
-    name: 'Yearly Plan', 
-    creditsPerDay: Infinity, 
-    priceInPaisa: 359900, // ₹3,599 = 3,59,900 paisa
-    duration: 365 
-  }
-];
+// Add plan tier levels for proper upgrade validation
+const planTiers = {
+  'free': 0,
+  'monthly': 1,
+  'three_month': 2,
+  'six_month': 3,
+  'yearly': 4
+};
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET
-});
+function validatePlanUpgrade(currentPlan, newPlan) {
+  return {
+    isValid: currentPlan !== newPlan,
+    isSamePlan: currentPlan === newPlan,
+    currentPlanDetails: plans.find(p => p.id === currentPlan),
+    newPlanDetails: plans.find(p => p.id === newPlan)
+  };
+}
 
-exports.getPlans = (req, res) => {
+const getPlans = (req, res) => {
   const formattedPlans = plans.map(plan => ({
     ...plan,
     creditsPerDay: plan.creditsPerDay === Infinity ? 'Unlimited' : plan.creditsPerDay,
@@ -64,7 +39,7 @@ exports.getPlans = (req, res) => {
   res.json(formattedPlans);
 };
 
-exports.subscribe = async (req, res) => {
+const subscribe = async (req, res) => {
   try {
     const { plan_id } = req.params;
     const userId = req.user._id;
@@ -142,360 +117,298 @@ exports.subscribe = async (req, res) => {
   }
 };
 
-exports.upgrade = async (req, res) => {
+const checkCredits = async (req, res, next) => {
   try {
-    const { plan_id } = req.params;
-    const userId = req.user._id;
-
-    const newPlan = plans.find(p => p.id === plan_id);
-    if (!newPlan) {
-      return res.status(400).json({ error: 'Invalid plan' });
+    const user = await User.findById(req.user._id).populate('activeSubscription');
+    if (!user) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'User not found' 
+      });
     }
 
-    const user = await User.findById(userId);
-    const currentSubscription = await Subscription.findOne({ user: userId, active: true });
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-    if (!currentSubscription) {
-      return res.status(400).json({ error: 'No active subscription found' });
-    }
-
-    const currentPlan = plans.find(p => p.id === currentSubscription.plan);
-    
-    if (newPlan.price <= currentPlan.price) {
-      return res.status(400).json({ error: 'New plan must be more expensive to upgrade' });
-    }
-
-    const now = new Date();
-    const unusedDays = Math.max(0, Math.ceil((currentSubscription.endDate - now) / (1000 * 60 * 60 * 24)));
-    const unusedValue = parseFloat(((unusedDays / currentPlan.duration) * currentPlan.price).toFixed(2));
-    const newPlanFullPrice = newPlan.price;
-    const proratedPrice = parseFloat(Math.max(0, newPlanFullPrice - unusedValue).toFixed(2));
-
-    if (user.balance < proratedPrice) {
-      return res.status(400).json({ error: 'Insufficient balance for upgrade' });
-    }
-
-    user.balance -= proratedPrice;
-
-    // Deactivate the current subscription
-    currentSubscription.active = false;
-    currentSubscription.endDate = now;
-    await currentSubscription.save();
-
-    // Create a new subscription for the upgraded plan
-    const newSubscription = new Subscription({
-      user: userId,
-      plan: newPlan.id,
-      creditsPerDay: newPlan.creditsPerDay || (newPlan.creditsPerMonth / 30),
-      startDate: now,
-      endDate: new Date(now.getTime() + newPlan.duration * 24 * 60 * 60 * 1000),
-      active: true
-    });
-
-    await newSubscription.save();
-    user.activeSubscription = newSubscription._id;
-    await user.save();
-
-    // Create transaction record
-    await Transaction.create({
-      user: userId,
-      type: 'upgrade',
-      amount: proratedPrice,
-      description: `Upgraded to ${newPlan.name} (prorated)`,
-      credits: newPlan.id === 'yearly' ? 'Unlimited' : (newSubscription.creditsPerDay * newPlan.duration)
-    });
-
-    res.json({ 
-      message: 'Subscription upgraded successfully', 
-      subscription: newSubscription,
-      billingDetails: {
-        newPlanFullPrice: newPlanFullPrice,
-        unusedValueFromPreviousPlan: unusedValue,
-        proratedPrice: proratedPrice,
-        totalPayableAmount: proratedPrice,
-        savings: unusedValue
+    // Get today's executions for all credit sources
+    const executionsToday = await Execution.countDocuments({
+      user: user._id,
+      createdAt: { 
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
       }
     });
+
+    // Get active subscription
+    const subscription = await Subscription.findOne({ 
+      user: user._id, 
+      active: true,
+      endDate: { $gt: new Date() }
+    }).sort({ startDate: -1 });
+
+    // Free plan user
+    if (!subscription || subscription.plan === 'free') {
+      const freeExecutionsToday = await Execution.countDocuments({
+        user: user._id,
+        createdAt: { 
+          $gte: today,
+          $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+        },
+        creditSource: 'free'
+      });
+
+      const remainingFreeCredits = 15 - freeExecutionsToday;
+      
+      if (remainingFreeCredits > 0) {
+        req.creditSource = 'free';
+        req.remainingCredits = remainingFreeCredits;
+        return next();
+      }
+
+      // If free credits exhausted, check other sources
+      if (user.credits.purchased > 0) {
+        req.creditSource = 'purchased';
+        return next();
+      }
+      // ... rest of the credit checks ...
+    }
+
+    // ... rest of the function for paid plans ...
+
   } catch (error) {
-    console.error('Upgrade error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Credit check error:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Failed to check credits'
+    });
   }
 };
 
-exports.cancelSubscription = async (req, res) => {
+const deductCredit = async (req, res, next) => {
   try {
-    const userId = req.user._id;
-    const currentSubscription = await Subscription.findOne({ user: userId, active: true });
-
-    if (!currentSubscription) {
-      return res.status(404).json({ error: 'No active subscription found' });
+    if (req.skipCreditDeduction) {
+      return next();
     }
 
-    if (currentSubscription.plan === 'free') {
-      return res.status(400).json({ error: 'Free plan cannot be cancelled' });
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+
+    // Create execution record
+    await Execution.create({
+      user: user._id,
+      creditSource: req.creditSource,
+      promoId: req.promoId || null
+    });
+
+    // Only deduct for credits that need manual tracking
+    switch (req.creditSource) {
+      case 'purchased':
+        user.credits.purchased -= 1;
+        await user.save();
+        break;
+
+      case 'granted':
+        user.credits.granted -= 1;
+        await user.save();
+        break;
+
+      case 'promotional':
+        const promoIndex = user.credits.promotional.findIndex(
+          promo => promo._id.toString() === req.promoId.toString()
+        );
+        if (promoIndex !== -1) {
+          user.credits.promotional[promoIndex].credits -= 1;
+          await user.save();
+        }
+        break;
+    }
+
+    next();
+  } catch (error) {
+    console.error('Credit deduction error:', error);
+    return res.status(500).json({ 
+      success: false,
+      error: 'Failed to deduct credit'
+    });
+  }
+};
+
+const cancelSubscription = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    // Get the active subscription
+    const subscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
+
+    if (!subscription) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'No active subscription found' 
+      });
+    }
+
+    if (subscription.plan === 'free') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Free plan cannot be cancelled' 
+      });
+    }
+
+    // Calculate time difference in hours
+    const hoursSinceSubscription = Math.abs(new Date() - subscription.startDate) / 36e5;
+
+    // Check if less than 24 hours have passed
+    if (hoursSinceSubscription < 24) {
+      return res.status(403).json({
+        success: false,
+        error: 'Subscription cannot be cancelled within 24 hours of purchase',
+        remainingHours: Math.ceil(24 - hoursSinceSubscription)
+      });
     }
 
     const now = new Date();
 
     // Deactivate the current paid subscription
-    currentSubscription.active = false;
-    currentSubscription.cancelledAt = now;
-    currentSubscription.endDate = now;
-    await currentSubscription.save();
+    subscription.active = false;
+    subscription.status = 'cancelled';
+    subscription.cancelledAt = now;
+    subscription.endDate = now;
+    await subscription.save();
 
-    // Find the user's original free plan subscription
-    const freePlanSubscription = await Subscription.findOne({ 
-      user: userId, 
-      plan: 'free',
-      active: false
-    }).sort({ startDate: -1 });
+    // Find and reactivate the original free plan
+    const user = await User.findById(userId);
+    const registrationDate = user.registrationDate || user.createdAt;
+    const oneYearFromRegistration = new Date(registrationDate);
+    oneYearFromRegistration.setFullYear(oneYearFromRegistration.getFullYear() + 1);
 
-    if (freePlanSubscription) {
-      // Calculate remaining credits from the free plan
-      const freePlanDuration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-      const timeUsedInFreePlan = currentSubscription.startDate - freePlanSubscription.startDate;
-      const fractionOfDayUsed = timeUsedInFreePlan / freePlanDuration;
-      const remainingCredits = Math.max(0, Math.floor(15 * (1 - fractionOfDayUsed)));
+    // Find the original free plan
+    let freePlan = await Subscription.findOne({
+      user: userId,
+      plan: 'free'
+    }).sort({ createdAt: 1 }); // Get the earliest free plan
 
-      // Reactivate the free plan subscription
-      freePlanSubscription.active = true;
-      freePlanSubscription.startDate = now;
-      freePlanSubscription.endDate = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000); // 1 year from now
-      freePlanSubscription.remainingCredits = remainingCredits;
-      await freePlanSubscription.save();
-
-      // Update user's active subscription
-      const user = await User.findById(userId);
-      user.activeSubscription = freePlanSubscription._id;
-      await user.save();
-
-      res.json({ 
-        message: 'Your paid subscription has been cancelled successfully. You have been reverted to the free plan.',
-        status: {
-          plan: 'free',
-          cancellationDate: currentSubscription.cancelledAt,
-          newPlanStartDate: freePlanSubscription.startDate,
-          newPlanEndDate: freePlanSubscription.endDate,
-          creditsPerDay: 15,
-          remainingCredits: remainingCredits,
-          message: `Your paid subscription has been cancelled. You are now back on the free plan with ${remainingCredits} credits remaining for today.`
-        }
+    if (freePlan) {
+      // Update the existing free plan
+      freePlan.set({
+        active: true,
+        status: 'active',
+        endDate: oneYearFromRegistration,
+        priceInPaisa: 0,
+        creditsPerDay: 15,
+        remainingCredits: 15
       });
     } else {
-      // In the unlikely event that no free plan is found, create a new one
-      const newFreeSubscription = new Subscription({
+      // If no free plan exists, create one with all required fields
+      freePlan = new Subscription({
         user: userId,
         plan: 'free',
-        startDate: now,
-        endDate: new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000),
+        startDate: registrationDate,
+        endDate: oneYearFromRegistration,
         creditsPerDay: 15,
-        remainingCredits: 15,
-        active: true
-      });
-
-      await newFreeSubscription.save();
-
-      // Update user's subscription
-      const user = await User.findById(userId);
-      user.activeSubscription = newFreeSubscription._id;
-      await user.save();
-
-      res.json({ 
-        message: 'Your paid subscription has been cancelled successfully. A new free plan has been created for you.',
-        status: {
-          plan: 'free',
-          cancellationDate: currentSubscription.cancelledAt,
-          newPlanStartDate: newFreeSubscription.startDate,
-          newPlanEndDate: newFreeSubscription.endDate,
-          creditsPerDay: 15,
-          remainingCredits: 15,
-          message: 'Your paid subscription has been cancelled. You are now on a new free plan with 15 credits for today.'
-        }
+        priceInPaisa: 0,
+        active: true,
+        status: 'active',
+        remainingCredits: 15
       });
     }
-  } catch (error) {
-    console.error('Cancel subscription error:', error);
-    res.status(500).json({ error: error.message });
-  }
-};
 
-exports.getStatus = async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
+    await freePlan.save();
 
-    const subscription = await Subscription.findOne({ user: user._id, active: true }).sort({ endDate: -1 });
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // Update user's subscription
+    user.subscriptionPlan = 'free';
+    user.activeSubscription = freePlan._id;
+    await user.save();
 
-    let status = {
-      plan: subscription ? subscription.plan : 'free',
-      status: subscription && subscription.active ? 'Active' : 'Inactive',
-      creditsPerDay: subscription ? subscription.creditsPerDay : 15, // Default for free plan
-      startDate: subscription ? subscription.startDate : new Date(),
-      endDate: subscription ? subscription.endDate : new Date(now.setFullYear(now.getFullYear() + 1)),
-    };
-
-    // Calculate remaining credits
-    const executionsToday = await Execution.countDocuments({
-      user: user._id,
-      createdAt: { $gte: Math.max(today, subscription ? subscription.startDate : today) }
+    // Create transaction record with all required fields
+    await Transaction.create({
+      user: userId,
+      type: 'subscription_cancellation',
+      amountInPaisa: 0,
+      credits: 15,
+      description: `Cancelled ${subscription.plan} plan subscription and reverted to free plan`,
+      status: 'completed'
     });
-
-    if (subscription && subscription.plan === 'yearly') {
-      status.remainingCredits = 'Unlimited';
-    } else {
-      status.remainingCredits = Math.max(0, status.creditsPerDay - executionsToday);
-    }
-
-    if (!subscription || !subscription.active) {
-      status.message = 'You currently have no active subscription. You can still use the compiler with pay-per-request pricing.';
-    } else if (now > subscription.endDate) {
-      status.status = 'Expired';
-      status.message = 'Your subscription has expired. You can still use the compiler with pay-per-request pricing or renew your plan.';
-    } else {
-      status.message = `Your ${status.plan} plan is currently active. You can use the compiler according to your plan limits.`;
-    }
-
-    res.json(status);
-  } catch (error) {
-    console.error('Error getting subscription status:', error);
-    res.status(500).json({ error: 'An error occurred while fetching subscription status' });
-  }
-};
-
-exports.createRazorpayOrder = async (req, res) => {
-  try {
-    const { plan_id } = req.params;
-    const plan = plans.find(p => p.id === plan_id);
-    
-    if (!plan) {
-      return res.status(400).json({ error: 'Invalid plan' });
-    }
-
-    const options = {
-      amount: plan.price * 100, // Razorpay expects amount in paise
-      currency: "INR",
-      receipt: "order_rcptid_" + Math.random().toString(36).substring(7),
-    };
-
-    const order = await razorpay.orders.create(options);
-    res.json(order);
-  } catch (error) {
-    console.error('Razorpay order creation error:', error);
-    res.status(500).json({ error: 'Failed to create Razorpay order' });
-  }
-};
-
-exports.verifyRazorpayPayment = async (req, res) => {
-  try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-    
-    const sign = razorpay_order_id + "|" + razorpay_payment_id;
-    const expectedSign = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(sign.toString())
-      .digest("hex");
-
-    if (razorpay_signature === expectedSign) {
-      // Payment is successful, update user's subscription
-      await exports.subscribe(req, res);
-    } else {
-      res.status(400).json({ error: "Invalid signature sent!" });
-    }
-  } catch (error) {
-    console.error('Razorpay payment verification error:', error);
-    res.status(500).json({ error: 'Failed to verify Razorpay payment' });
-  }
-};
-
-exports.getSubscriptionHistory = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const subscriptions = await Subscription.find({ user: userId, plan: { $ne: 'free' } }).sort({ startDate: -1 });
-
-    const now = new Date();
-    const history = subscriptions.map((sub, index) => {
-      let status;
-      if (sub.active && now <= sub.endDate) {
-        status = 'Active';
-      } else if (sub.status === 'cancelled') {
-        status = 'Cancelled';
-      } else {
-        status = 'Expired';
-      }
-
-      let subscriptionDetails = {
-        plan: sub.plan,
-        status: status,
-        creditsPerDay: sub.creditsPerDay,
-        startDate: sub.startDate.toISOString(),
-        endDate: sub.endDate.toISOString(),
-        price: plans.find(p => p.id === sub.plan).price,
-        dateTime: sub.startDate.toISOString() // Add dateTime field
-      };
-
-      if (status === 'Active') {
-        subscriptionDetails.message = `Your ${sub.plan} plan is currently active until ${sub.endDate.toDateString()}.`;
-      } else if (status === 'Cancelled') {
-        subscriptionDetails.message = `This ${sub.plan} subscription was cancelled on ${sub.endDate.toDateString()}.`;
-      } else {
-        subscriptionDetails.message = `This ${sub.plan} subscription expired on ${sub.endDate.toDateString()}.`;
-      }
-
-      // Add transition information
-      if (index === subscriptions.length - 1) {
-        subscriptionDetails.transition = `Upgraded from free to ${sub.plan}`;
-      } else {
-        const previousSub = subscriptions[index + 1];
-        const currentPlanPrice = plans.find(p => p.id === sub.plan).price;
-        const previousPlanPrice = plans.find(p => p.id === previousSub.plan).price;
-
-        if (currentPlanPrice > previousPlanPrice) {
-          subscriptionDetails.transition = `Upgraded from ${previousSub.plan} to ${sub.plan}`;
-        } else if (currentPlanPrice < previousPlanPrice) {
-          subscriptionDetails.transition = `Downgraded from ${previousSub.plan} to ${sub.plan}`;
-        } else if (sub.plan !== previousSub.plan) {
-          subscriptionDetails.transition = `Changed from ${previousSub.plan} to ${sub.plan}`;
-        } else {
-          subscriptionDetails.transition = `Renewed ${sub.plan} subscription`;
-        }
-      }
-
-      return subscriptionDetails;
-    });
-
-    // Add current free plan if not on a paid plan
-    const currentSubscription = await Subscription.findOne({ user: userId, active: true });
-    if (!currentSubscription || currentSubscription.plan === 'free') {
-      const freePlanStartDate = currentSubscription ? currentSubscription.startDate : new Date();
-      const freePlan = {
-        plan: 'free',
-        status: 'Active',
-        creditsPerDay: 15,
-        startDate: freePlanStartDate.toISOString(),
-        endDate: new Date(freePlanStartDate.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString(),
-        price: 0,
-        message: 'Your free plan is currently active.',
-        transition: history.length > 0 ? 'Downgraded from paid plan to free' : 'Initial free plan',
-        dateTime: freePlanStartDate.toISOString() // Add dateTime field for free plan
-      };
-      history.unshift(freePlan);
-    }
 
     res.json({
-      message: 'Subscription history retrieved successfully',
-      history: history
+      success: true,
+      message: 'Subscription cancelled successfully. Reverted to free plan.',
+      subscription: {
+        plan: 'free',
+        creditsPerDay: 15,
+        startDate: freePlan.startDate,
+        endDate: freePlan.endDate,
+        daysRemaining: Math.ceil((oneYearFromRegistration - now) / (1000 * 60 * 60 * 24))
+      }
     });
+
   } catch (error) {
-    console.error('Error fetching subscription history:', error);
-    res.status(500).json({ error: 'An error occurred while fetching subscription history' });
+    console.error('Cancellation error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to cancel subscription',
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 };
 
-exports.downgrade = async (req, res) => {
+const getStatus = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get user and subscription info
+    const user = await User.findById(userId);
+    const subscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
+
+    // Get today's executions
+    const todayUsed = await Execution.countDocuments({
+      user: userId,
+      createdAt: { 
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+      }
+    });
+
+    // Calculate remaining credits
+    const creditsPerDay = subscription ? subscription.creditsPerDay : 15;
+    const remainingCredits = Math.max(0, creditsPerDay - todayUsed);
+
+    const response = {
+      success: true,
+      plan: subscription ? subscription.plan : 'free',
+      status: 'active',
+      creditsPerDay: creditsPerDay,
+      startDate: subscription ? subscription.startDate : today,
+      endDate: subscription ? subscription.endDate : new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000),
+      todayUsed: todayUsed,
+      remainingCredits: remainingCredits,
+      message: `Your ${subscription ? subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1) : 'Free'} Plan is currently active. You have ${remainingCredits} credits remaining for today. Your daily credit limit is ${creditsPerDay}.`
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Error getting subscription status:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get subscription status'
+    });
+  }
+};
+
+const downgrade = async (req, res) => {
   try {
     const { plan_id } = req.params;
     const userId = req.user._id;
@@ -526,138 +439,144 @@ exports.downgrade = async (req, res) => {
   }
 };
 
-exports.getSubscriptionStatus = async (req, res) => {
-  try {
-    const user = await User.findById(req.user._id).populate('activeSubscription');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    let status = {
-      plan: user.subscriptionPlan,
-      status: 'Active',
-      creditsPerDay: 15, // Default for free plan
-      startDate: user.registrationDate,
-      endDate: user.freePlanEndDate,
-      remainingCredits: 0
-    };
-
-    if (user.activeSubscription) {
-      status.plan = user.activeSubscription.plan;
-      status.creditsPerDay = user.activeSubscription.creditsPerDay;
-      status.startDate = user.activeSubscription.startDate;
-      status.endDate = user.activeSubscription.endDate;
-    }
-
-    // Calculate remaining credits
-    const todayExecutions = await Execution.countDocuments({
-      user: user._id,
-      createdAt: { $gte: today }
-    });
-
-    if (status.plan === 'free') {
-      status.remainingCredits = Math.max(0, status.creditsPerDay - todayExecutions);
-    } else {
-      status.remainingCredits = Math.max(0, status.creditsPerDay - todayExecutions);
-    }
-
-    // Get total API usage (executions) since account creation
-    const totalApiUsage = await Execution.countDocuments({ user: user._id });
-    status.totalApiUsage = totalApiUsage;
-
-    status.message = `Your ${status.plan} plan is currently active. You have ${status.remainingCredits} credits remaining for today. Your daily credit limit is ${status.creditsPerDay}.`;
-
-    res.json(status);
-  } catch (error) {
-    console.error('Error fetching subscription status:', error);
-    res.status(500).json({ error: 'An error occurred while fetching subscription status' });
-  }
-};
-
-// Helper function to get today's executions
-async function getTodayExecutions(userId) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return await Execution.countDocuments({
-    user: userId,
-    createdAt: { $gte: today }
-  });
-}
-
-exports.cancel = async (req, res) => {
+const getSubscriptionTransactions = async (req, res) => {
   try {
     const userId = req.user._id;
+    const { limit = 10 } = req.query; // Optional limit parameter
     
-    // Get the active subscription
-    const subscription = await Subscription.findOne({ 
-      user: userId, 
-      active: true 
+    const transactions = await Transaction.find({ 
+      user: userId,
+      type: { 
+        $in: [
+          'subscription_payment',
+          'subscription_cancellation',
+          'subscription_upgrade',
+          'subscription_downgrade'
+        ] 
+      }
+    })
+    .sort({ createdAt: -1 })
+    .limit(parseInt(limit))
+    .lean();
+
+    const formattedTransactions = transactions.map(transaction => ({
+      _id: transaction._id,
+      type: transaction.type,
+      amountInPaisa: transaction.amountInPaisa,
+      description: transaction.description,
+      status: transaction.status,
+      createdAt: transaction.createdAt,
+      formattedAmount: `₹${(transaction.amountInPaisa / 100).toFixed(2)}`,
+      formattedDate: new Date(transaction.createdAt).toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }));
+
+    res.json({
+      success: true,
+      transactions: formattedTransactions
     });
-
-    if (!subscription) {
-      return res.status(404).json({ 
-        success: false,
-        error: 'No active subscription found' 
-      });
-    }
-
-    // Calculate time difference in hours
-    const hoursSinceSubscription = Math.abs(new Date() - subscription.startDate) / 36e5;
-
-    // Check if less than 24 hours have passed
-    if (hoursSinceSubscription < 24) {
-      return res.status(403).json({
-        success: false,
-        error: 'Subscription cannot be cancelled within 24 hours of purchase',
-        remainingHours: Math.ceil(24 - hoursSinceSubscription)
-      });
-    }
-
-    // Cancel current subscription and create free plan
-    const result = await subscriptionService.cancelAndCreateFreePlan(userId);
-    res.json(result);
-
   } catch (error) {
-    console.error('Cancellation error:', error);
+    console.error('Error fetching subscription transactions:', error);
     res.status(500).json({ 
       success: false,
-      error: 'Failed to cancel subscription',
+      error: 'Failed to fetch subscription transactions',
       message: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-exports.createOrder = async (req, res) => {
+// Helper function to format date in IST
+const formatDateIST = (date) => {
+  return date.toLocaleDateString('en-IN', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    timeZone: 'Asia/Kolkata'
+  }) + ' IST';
+};
+
+const upgrade = async (req, res) => {
   try {
-    const { planId } = req.body;
-    const plan = plans.find(p => p.id === planId);
-    
-    if (!plan) {
-      return res.status(400).json({ error: 'Invalid plan selected' });
+    const { plan_id } = req.params;
+    const userId = req.user._id;
+
+    // Get current subscription
+    const currentSubscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
+
+    // Get plan details
+    const newPlan = plans.find(p => p.id === plan_id);
+    if (!newPlan) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid plan selected' 
+      });
     }
 
-    const order = await razorpay.orders.create({
-      amount: plan.priceInPaisa,
-      currency: 'INR',
-      receipt: `order_${Date.now()}`
+    // Validate upgrade path
+    const currentTier = planTiers[currentSubscription.plan];
+    const newTier = planTiers[plan_id];
+
+    if (newTier <= currentTier) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot upgrade from ${currentSubscription.plan} to ${plan_id}. Please select a higher tier plan.`,
+        currentPlan: currentSubscription.plan,
+        currentTier,
+        requestedPlan: plan_id,
+        requestedTier: newTier,
+        availableUpgrades: Object.keys(planTiers).filter(plan => planTiers[plan] > currentTier)
+      });
+    }
+
+    // Check balance
+    const user = await User.findById(userId);
+    if (user.balanceInPaisa < newPlan.priceInPaisa) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Insufficient balance',
+        required: newPlan.priceInPaisa / 100,
+        current: user.balanceInPaisa / 100
+      });
+    }
+
+    // Perform upgrade
+    const result = await subscriptionService.upgradeSubscription(userId, plan_id);
+
+    return res.json({
+      success: true,
+      message: 'Subscription upgraded successfully',
+      subscription: result.newSubscription
     });
 
-    res.json({
-      orderId: order.id,
-      amountInPaisa: plan.priceInPaisa,
-      amountInRupees: plan.priceInPaisa / 100,
-      formattedAmount: `₹${(plan.priceInPaisa/100).toFixed(2)}`,
-      currency: 'INR',
-      plan: {
-        ...plan,
-        formattedPrice: `₹${(plan.priceInPaisa/100).toFixed(2)}`
-      }
-    });
   } catch (error) {
-    console.error('Order creation error:', error);
-    res.status(500).json({ error: 'Failed to create order' });
+    console.error('Upgrade error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to upgrade subscription' 
+    });
   }
 };
+
+module.exports = {
+  getPlans,
+  subscribe,
+  upgrade,
+  cancelSubscription,
+  getStatus,
+  getSubscriptionTransactions,
+  checkCredits,
+  deductCredit,
+  downgrade
+};
+

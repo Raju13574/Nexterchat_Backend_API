@@ -110,7 +110,8 @@ exports.registerUser = async (req, res) => {
       startDate: new Date(),
       endDate: oneYearFromNow,
       active: true,
-      creditsPerDay: 15
+      creditsPerDay: 15,
+      priceInPaisa: 0
     });
 
     await freeSubscription.save();

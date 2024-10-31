@@ -14,11 +14,7 @@ const subscriptionSchema = new mongoose.Schema({
   priceInPaisa: {
     type: Number,
     required: true,
-    min: 0,
-    validate: {
-      validator: Number.isInteger,
-      message: 'Price must be an integer (in paisa)'
-    }
+    min: 0
   },
   startDate: {
     type: Date,
@@ -38,15 +34,7 @@ const subscriptionSchema = new mongoose.Schema({
     validate: {
       validator: function(v) {
         return v === 'Unlimited' || (typeof v === 'number' && v >= 0);
-      },
-      message: props => `${props.value} is not a valid value for creditsPerDay`
-    }
-  },
-  remainingCredits: {
-    type: Number,
-    required: true,
-    default: function() {
-      return this.creditsPerDay === 'Unlimited' ? Infinity : this.creditsPerDay;
+      }
     }
   },
   status: {

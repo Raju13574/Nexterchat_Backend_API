@@ -2,57 +2,20 @@ const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const Execution = require('../models/Execution');
 const Transaction = require('../models/Transaction');
-
-const plans = [
-  { 
-    id: 'free', 
-    name: 'Free Plan', 
-    creditsPerDay: 15, 
-    priceInPaisa: 0,
-    duration: 365 
-  },
-  { 
-    id: 'monthly', 
-    name: 'Monthly Plan', 
-    creditsPerDay: 1500, 
-    priceInPaisa: 49900, // ₹499 = 49,900 paisa
-    duration: 30 
-  },
-  { 
-    id: 'three_month', 
-    name: 'Three Months Plan', 
-    creditsPerDay: 2000, 
-    priceInPaisa: 129900, // ₹1,299 = 1,29,900 paisa
-    duration: 90 
-  },
-  { 
-    id: 'six_month', 
-    name: 'Six Months Plan', 
-    creditsPerDay: 3000, 
-    priceInPaisa: 199900, // ₹1,999 = 1,99,900 paisa
-    duration: 180 
-  },
-  { 
-    id: 'yearly', 
-    name: 'Yearly Plan', 
-    creditsPerDay: Infinity, 
-    priceInPaisa: 359900, // ₹3,599 = 3,59,900 paisa
-    duration: 365 
-  }
-];
+const plans = require('../config/plans');
 
 // Price per credit in paisa
-const CREDIT_PRICE_IN_PAISA = 100; // ₹1 = 100 paisa per credit
+const CREDIT_PRICE_IN_PAISA = 50; // ₹0.5 = 50 paisa per credit
 
 // Update per request price to INR
-const PER_REQUEST_PRICE = 1; // ₹1 per request
+const PER_REQUEST_PRICE = 0.5; // ₹0.5 per request
 
 function calculateUpgradeCost(currentPlan, newPlan, daysUsed) {
-  const dailyRate = currentPlan.priceInPaisa / currentPlan.duration;
+  const dailyRate = currentPlan.price / currentPlan.duration;
   const unusedDays = Math.max(0, currentPlan.duration - daysUsed);
   const credit = dailyRate * unusedDays;
-  const upgradeCost = Math.max(0, newPlan.priceInPaisa - credit);
-  return Number((upgradeCost / 100).toFixed(2));
+  const upgradeCost = Math.max(0, newPlan.price - credit);
+  return Number(upgradeCost.toFixed(2));
 }
 
 const createSubscription = async (userId, planId) => {
@@ -146,43 +109,73 @@ const cancelSubscription = async (userId) => {
     throw new Error('No active subscription found');
   }
 
+  if (subscription.plan === 'free') {
+    throw new Error('Free plan cannot be cancelled');
+  }
+
   // Check if 24 hours have passed since subscription start
   const hoursSinceSubscription = Math.abs(new Date() - subscription.startDate) / 36e5;
   if (hoursSinceSubscription < 24) {
     throw new Error(`Cannot cancel subscription within 24 hours of purchase. Please wait ${Math.ceil(24 - hoursSinceSubscription)} more hours.`);
   }
 
+  const now = new Date();
+  
+  // Deactivate current subscription
   subscription.active = false;
-  subscription.endDate = new Date();
+  subscription.endDate = now;
+  subscription.cancelledAt = now;
   await subscription.save();
 
-  // Create a transaction record for the cancellation
-  await Transaction.create({
-    user: userId,
-    type: 'subscription_cancellation',
-    amount: 0,
-    description: `Cancelled ${subscription.plan} plan subscription`,
-    status: 'completed'
-  });
-
-  return {
-    success: true,
-    message: 'Subscription cancelled successfully',
-    cancellationDate: subscription.endDate
-  };
+  return subscription;
 };
 
 exports.getSubscriptionStatus = async (userId) => {
-  const subscription = await Subscription.findOne({ user: userId, active: true });
-  if (!subscription) {
-    return { active: false, plan: 'pay_per_request' };
+  try {
+    const subscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
+
+    if (!subscription) {
+      return {
+        success: true,
+        plan: 'free',
+        status: 'active',
+        creditsPerDay: 15,
+        message: 'You are on the free plan with 15 credits per day.'
+      };
+    }
+
+    // Get today's usage
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const executionsToday = await Execution.countDocuments({
+      user: userId,
+      createdAt: { 
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+      }
+    });
+
+    const creditsPerDay = subscription.creditsPerDay;
+    const remainingCredits = creditsPerDay - executionsToday;
+
+    return {
+      success: true,
+      plan: subscription.plan,
+      status: subscription.status,
+      creditsPerDay: creditsPerDay,
+      startDate: subscription.startDate,
+      endDate: subscription.endDate,
+      remainingCredits: remainingCredits,
+      message: `Your ${subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)} Plan is currently active. You have ${remainingCredits} credits remaining for today. Your daily credit limit is ${creditsPerDay}.`
+    };
+  } catch (error) {
+    console.error('Error getting subscription status:', error);
+    throw error;
   }
-  return {
-    active: true,
-    plan: subscription.plan,
-    endDate: subscription.endDate,
-    creditsPerDay: subscription.creditsPerDay
-  };
 };
 
 exports.handleRequest = async (userId) => {
@@ -225,35 +218,68 @@ exports.handleRequest = async (userId) => {
 };
 
 exports.upgradeSubscription = async (userId, newPlanId) => {
-  const user = await User.findById(userId);
-  if (!user) throw new Error('User not found');
+  try {
+    const user = await User.findById(userId);
+    const oldSubscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
 
-  const currentSubscription = await Subscription.findOne({ user: userId, active: true });
-  if (currentSubscription) {
-    currentSubscription.active = false;
-    currentSubscription.endDate = new Date();
-    currentSubscription.status = 'upgraded';
-    await currentSubscription.save();
+    const newPlan = plans.find(p => p.id === newPlanId);
+    if (!newPlan) throw new Error('Invalid plan selected');
+
+    // Get today's date for resetting execution count
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // 1. Deactivate old subscription
+    if (oldSubscription) {
+      oldSubscription.active = false;
+      oldSubscription.status = 'upgraded';
+      await oldSubscription.save();
+    }
+
+    // 2. Create new subscription with FULL credits
+    const newSubscription = await Subscription.create({
+      user: userId,
+      plan: newPlanId,
+      priceInPaisa: newPlan.priceInPaisa,
+      creditsPerDay: newPlan.creditsPerDay,
+      startDate: new Date(),
+      endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+      active: true
+    });
+
+    // 3. IMPORTANT: Delete today's execution records to reset count
+    await Execution.deleteMany({
+      user: userId,
+      createdAt: { 
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
+      }
+    });
+
+    // 4. Update user's subscription
+    user.activeSubscription = newSubscription._id;
+    user.subscriptionPlan = newPlanId;
+    await user.save();
+
+    // 5. Create upgrade transaction record
+    await Transaction.create({
+      user: userId,
+      type: 'subscription_upgrade',
+      amountInPaisa: newPlan.priceInPaisa,
+      description: `Upgraded from ${oldSubscription?.plan || 'free'} to ${newPlanId} plan`,
+      status: 'completed'
+    });
+
+    return {
+      success: true,
+      newSubscription
+    };
+  } catch (error) {
+    throw error;
   }
-
-  const newPlan = plans.find(p => p.id === newPlanId);
-  if (!newPlan) throw new Error('Invalid plan');
-
-  const newSubscription = new Subscription({
-    user: userId,
-    plan: newPlanId,
-    creditsPerDay: newPlan.creditsPerDay,
-    startDate: new Date(),
-    endDate: newPlan.duration === Infinity ? null : new Date(Date.now() + newPlan.duration * 24 * 60 * 60 * 1000),
-    active: true,
-    status: 'active'
-  });
-
-  await newSubscription.save();
-  user.activeSubscription = newSubscription._id;
-  await user.save();
-
-  return { newSubscription };
 };
 
 exports.useCredit = async (userId) => {
@@ -272,45 +298,43 @@ exports.useCredit = async (userId) => {
 
 exports.checkAndUpdateCredits = async (userId) => {
   const user = await User.findById(userId).populate('activeSubscription');
-  if (!user) throw new CustomError('User not found', 404);
+  if (!user) throw new Error('User not found');
 
-  console.log('User:', user);
-  console.log('Active Subscription:', user.activeSubscription);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  let canExecute = false;
-  let creditsToUse = 0;
+  // Get today's executions
+  const executionsToday = await Execution.countDocuments({
+    user: userId,
+    createdAt: { $gte: today }
+  });
 
-  if (user.activeSubscription && user.activeSubscription.plan !== 'free') {
-    console.log('User has a paid subscription');
-    canExecute = true;
-    creditsToUse = user.activeSubscription.creditsPerDay;
-    
-    const today = new Date().setHours(0, 0, 0, 0);
-    if (user.activeSubscription.lastCreditReset < today) {
-      console.log('Resetting daily credits for paid plan');
-      user.activeSubscription.remainingCredits = user.activeSubscription.creditsPerDay;
-      user.activeSubscription.lastCreditReset = today;
-      await user.activeSubscription.save();
+  // Check subscription status
+  const subscription = await Subscription.findOne({ 
+    user: userId, 
+    active: true,
+    endDate: { $gt: now }
+  });
+
+  if (subscription) {
+    // Handle unlimited credits for yearly plan
+    if (subscription.plan === 'yearly') {
+      return { canExecute: true, creditsRemaining: 'Unlimited' };
     }
-  } else {
-    console.log('User is on free plan');
-    const today = new Date().setHours(0, 0, 0, 0);
-    if (user.lastFreeCreditsReset < today) {
-      console.log('Resetting daily free credits');
-      user.freeCredits = 15; // This is already correct
-      user.lastFreeCreditsReset = today;
-      await user.save();
-    }
-    if (user.freeCredits > 0) {
-      canExecute = true;
-      creditsToUse = user.freeCredits;
-    }
+
+    const creditsRemaining = subscription.creditsPerDay - executionsToday;
+    return {
+      canExecute: creditsRemaining > 0,
+      creditsRemaining
+    };
   }
 
-  console.log('Can execute:', canExecute);
-  console.log('Credits to use:', creditsToUse);
-
-  return { canExecute, creditsToUse };
+  // Handle free plan
+  const freeCreditsRemaining = 15 - executionsToday;
+  return {
+    canExecute: freeCreditsRemaining > 0,
+    creditsRemaining: freeCreditsRemaining
+  };
 };
 
 exports.deductCredit = async (userId) => {

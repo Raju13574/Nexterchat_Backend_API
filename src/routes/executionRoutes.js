@@ -6,9 +6,9 @@ const { checkCredits, deductCredit } = require('../middleware/creditMiddleware')
 
 router.post('/', 
   authenticateUser,
-  checkCredits,              // First check credits
-  executionController.executeCode,  // Execute code
-  deductCredit              // Deduct credits after successful execution
+  checkCredits,
+  deductCredit,
+  executionController.executeCode
 );
 
 router.get('/history', authenticateUser, executionController.getExecutionHistory);

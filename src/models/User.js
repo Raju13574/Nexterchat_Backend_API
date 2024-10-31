@@ -18,14 +18,10 @@ const userSchema = new mongoose.Schema({
   subscriptionPlan: { type: String, default: 'free' },
   freeCredits: { type: Number, default: 15 },
   purchasedCredits: { type: Number, default: 0 },
-  balanceInPaisa: { 
+  balanceInPaisa: {
     type: Number,
     default: 0,
-    min: 0,
-    validate: {
-      validator: Number.isInteger,
-      message: 'Balance must be an integer (in paisa)'
-    }
+    min: 0
   },
   __v: { type: Number, select: false },
   hadPaidSubscription: { type: Boolean, default: false },
@@ -69,6 +65,11 @@ userSchema.virtual('totalCredits').get(function() {
 // Add virtual for formatted balance
 userSchema.virtual('formattedBalance').get(function() {
   return `₹${(this.balanceInPaisa / 100).toFixed(2)}`;
+});
+
+// Add virtual for balance in rupees
+userSchema.virtual('balanceInRupees').get(function() {
+  return (this.balanceInPaisa || 0) / 100;
 });
 
 userSchema.pre('save', async function(next) {

@@ -4,7 +4,6 @@ const Subscription = require('../models/Subscription');
 const Execution = require('../models/Execution');
 const walletService = require('../services/walletService');
 const moment = require('moment');
-const { razorpay } = require('./subscriptionController');
 
 exports.getBalance = async (req, res) => {
   try {
@@ -379,22 +378,6 @@ exports.purchaseCredits = async (req, res) => {
     });
   }
 };
-
-async function createRazorpayOrder(amount) {
-  const options = {
-    amount: Math.ceil(amount * 100), // Razorpay expects amount in paise
-    currency: "INR",
-    receipt: "order_rcptid_" + Math.random().toString(36).substring(7),
-  };
-
-  try {
-    const order = await razorpay.orders.create(options);
-    return order;
-  } catch (error) {
-    console.error('Razorpay order creation error:', error);
-    throw new Error('Failed to create Razorpay order');
-  }
-}
 
 exports.getPurchasedCredits = async (req, res) => {
   try {

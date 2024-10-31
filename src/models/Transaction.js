@@ -8,12 +8,22 @@ const transactionSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['deposit', 'withdrawal', 'credit_purchase', 'subscription_payment'],
+    enum: [
+      'deposit', 
+      'withdrawal', 
+      'credit_purchase', 
+      'subscription_payment', 
+      'subscription_cancellation',
+      'subscription_upgrade',
+      'subscription_downgrade',
+      'subscription'
+    ],
     required: true
   },
   amountInPaisa: {
     type: Number,
-    required: true
+    required: true,
+    default: 0
   },
   credits: {
     type: Number,
