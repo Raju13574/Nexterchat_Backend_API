@@ -507,18 +507,56 @@ const upgrade = async (req, res) => {
     const { plan_id } = req.params;
     const userId = req.user._id;
 
-    // Get current subscription
+    // Get current subscription first
     const currentSubscription = await Subscription.findOne({ 
       user: userId, 
-      active: true 
+      active: true,
+      endDate: { $gt: new Date() }
     });
+
+    if (!currentSubscription) {
+      return res.status(400).json({
+        success: false,
+        error: 'No active subscription found'
+      });
+    }
+
+    // Check if trying to upgrade to the same plan FIRST
+    if (currentSubscription.plan === plan_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'You are already subscribed to this plan',
+        currentPlan: currentSubscription.plan,
+        endDate: currentSubscription.endDate,
+        remainingDays: Math.ceil((currentSubscription.endDate - new Date()) / (1000 * 60 * 60 * 24))
+      });
+    }
+
+    // Then check for scheduled upgrades
+    const scheduledSubscription = await Subscription.findOne({ 
+      user: userId, 
+      status: 'scheduled'
+    });
+
+    if (scheduledSubscription) {
+      return res.status(400).json({
+        success: false,
+        error: 'You already have a scheduled upgrade',
+        scheduledPlan: {
+          plan: scheduledSubscription.plan,
+          startDate: scheduledSubscription.startDate,
+          endDate: scheduledSubscription.endDate
+        }
+      });
+    }
 
     // Get plan details
     const newPlan = plans.find(p => p.id === plan_id);
     if (!newPlan) {
       return res.status(400).json({ 
         success: false, 
-        error: 'Invalid plan selected' 
+        error: 'Invalid plan selected',
+        availablePlans: plans.map(p => p.id)
       });
     }
 
@@ -531,9 +569,7 @@ const upgrade = async (req, res) => {
         success: false,
         error: `Cannot upgrade from ${currentSubscription.plan} to ${plan_id}. Please select a higher tier plan.`,
         currentPlan: currentSubscription.plan,
-        currentTier,
         requestedPlan: plan_id,
-        requestedTier: newTier,
         availableUpgrades: Object.keys(planTiers).filter(plan => planTiers[plan] > currentTier)
       });
     }
@@ -541,49 +577,114 @@ const upgrade = async (req, res) => {
     // Check balance
     const user = await User.findById(userId);
     if (user.balanceInPaisa < newPlan.priceInPaisa) {
-      // Create transaction record
-      const transaction = await Transaction.create({
-        user: userId,
-        type: 'subscription_upgrade',
-        amountInPaisa: newPlan.priceInPaisa,
-        description: `Failed to upgrade to ${plan_id} plan - Insufficient balance`,
-        status: 'failed',
-        credits: 0
-      });
-
       const shortfall = newPlan.priceInPaisa - user.balanceInPaisa;
-      
       return res.status(400).json({ 
         success: false, 
         error: 'Insufficient balance',
         required: newPlan.priceInPaisa / 100,
         current: user.balanceInPaisa / 100,
-        timestamp: new Date().toISOString(),
-        transactionId: transaction._id,
-        details: {
-          planRequested: plan_id,
-          priceInRupees: `₹${newPlan.priceInPaisa / 100}`,
-          walletBalance: `₹${user.balanceInPaisa / 100}`,
-          shortfall: `₹${shortfall / 100}`
-        },
+        shortfall: `₹${shortfall / 100}`,
         message: "Please add funds to your wallet to upgrade your subscription."
       });
     }
 
-    // Perform upgrade
-    const result = await subscriptionService.upgradeSubscription(userId, plan_id);
+    // Create new subscription with future start date
+    const newSubscription = new Subscription({
+      user: userId,
+      plan: plan_id,
+      startDate: currentSubscription.endDate, // Start when current plan ends
+      endDate: new Date(currentSubscription.endDate.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+      creditsPerDay: newPlan.creditsPerDay,
+      priceInPaisa: newPlan.priceInPaisa,
+      status: 'scheduled',
+      active: false // Will be activated when current plan ends
+    });
+
+    await newSubscription.save();
+
+    // Deduct balance and create transaction
+    user.balanceInPaisa -= newPlan.priceInPaisa;
+    await user.save();
+
+    await Transaction.create({
+      user: userId,
+      type: 'subscription_upgrade',
+      amountInPaisa: newPlan.priceInPaisa,
+      description: `Scheduled upgrade from ${currentSubscription.plan} to ${plan_id}. Will activate on ${formatDateIST(currentSubscription.endDate)}`,
+      status: 'completed'
+    });
 
     return res.json({
       success: true,
-      message: 'Subscription upgraded successfully',
-      subscription: result.newSubscription
+      message: 'Subscription upgrade scheduled successfully',
+      currentSubscription: {
+        plan: currentSubscription.plan,
+        endDate: currentSubscription.endDate,
+        remainingDays: Math.ceil((currentSubscription.endDate - new Date()) / (1000 * 60 * 60 * 24))
+      },
+      upgradedSubscription: {
+        plan: newSubscription.plan,
+        startDate: newSubscription.startDate,
+        endDate: newSubscription.endDate,
+        status: 'scheduled',
+        creditsPerDay: newSubscription.creditsPerDay
+      }
     });
 
   } catch (error) {
     console.error('Upgrade error:', error);
     return res.status(500).json({ 
       success: false, 
-      error: error.message || 'Failed to upgrade subscription' 
+      error: error.message || 'Failed to schedule subscription upgrade' 
+    });
+  }
+};
+
+const cancelScheduledUpgrade = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Find scheduled subscription
+    const scheduledSubscription = await Subscription.findOne({ 
+      user: userId, 
+      status: 'scheduled'
+    });
+
+    if (!scheduledSubscription) {
+      return res.status(404).json({
+        success: false,
+        error: 'No scheduled upgrade found'
+      });
+    }
+
+    // Refund the payment
+    const user = await User.findById(userId);
+    user.balanceInPaisa += scheduledSubscription.priceInPaisa;
+    await user.save();
+
+    // Create refund transaction
+    await Transaction.create({
+      user: userId,
+      type: 'subscription_cancellation',
+      amountInPaisa: scheduledSubscription.priceInPaisa,
+      description: `Cancelled scheduled upgrade to ${scheduledSubscription.plan}`,
+      status: 'completed'
+    });
+
+    // Delete the scheduled subscription - Fixed line
+    await Subscription.deleteOne({ _id: scheduledSubscription._id });  // Changed this line
+
+    return res.json({
+      success: true,
+      message: 'Scheduled upgrade cancelled successfully',
+      refundedAmount: `₹${scheduledSubscription.priceInPaisa / 100}`
+    });
+
+  } catch (error) {
+    console.error('Cancel scheduled upgrade error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to cancel scheduled upgrade' 
     });
   }
 };
@@ -593,6 +694,7 @@ module.exports = {
   subscribe,
   upgrade,
   cancelSubscription,
+  cancelScheduledUpgrade,
   getStatus,
   getSubscriptionTransactions,
   checkCredits,

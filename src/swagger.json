@@ -1242,7 +1242,7 @@
   },
   "/subscription/plans/{plan_id}/upgrade": {
     "post": {
-      "summary": "Upgrade to a plan",
+      "summary": "Schedule a subscription upgrade",
       "tags": ["Subscription"],
       "security": [{ "bearerAuth": [] }],
       "parameters": [
@@ -1250,17 +1250,69 @@
           "name": "plan_id",
           "in": "path",
           "required": true,
-          "schema": {
+          "schema": { 
             "type": "string",
-            "enum": ["monthly", "three_month", "six_month", "yearly"],
-            "description": "ID of the plan to upgrade to"
+            "enum": ["monthly", "three_month", "six_month", "yearly"]
           }
         }
       ],
       "responses": {
-        "200": { "description": "Subscription upgraded successfully" },
-        "400": { "description": "Invalid plan or insufficient balance" },
-        "401": { "description": "Unauthorized" }
+        "200": {
+          "description": "Subscription upgrade scheduled successfully",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "success": { "type": "boolean" },
+                  "message": { "type": "string" },
+                  "currentSubscription": {
+                    "type": "object",
+                    "properties": {
+                      "plan": { "type": "string" },
+                      "endDate": { "type": "string", "format": "date-time" },
+                      "remainingDays": { "type": "integer" }
+                    }
+                  },
+                  "upgradedSubscription": {
+                    "type": "object",
+                    "properties": {
+                      "plan": { "type": "string" },
+                      "startDate": { "type": "string", "format": "date-time" },
+                      "endDate": { "type": "string", "format": "date-time" },
+                      "status": { "type": "string" },
+                      "creditsPerDay": { "type": "integer" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "400": {
+          "description": "Bad Request",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "success": { "type": "boolean" },
+                  "error": { "type": "string" },
+                  "scheduledPlan": {
+                    "type": "object",
+                    "properties": {
+                      "plan": { "type": "string" },
+                      "startDate": { "type": "string", "format": "date-time" },
+                      "endDate": { "type": "string", "format": "date-time" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "401": { "description": "Unauthorized" },
+        "500": { "description": "Server error" }
       }
     }
   },
@@ -1727,6 +1779,46 @@
           },
           "401": { "description": "Unauthorized" },
           "500": { "description": "Failed to fetch subscription transactions" }
+        }
+      }
+    },
+    "/subscription/cancel-scheduled-upgrade": {
+      "post": {
+        "summary": "Cancel a scheduled subscription upgrade",
+        "tags": ["Subscription"],
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Scheduled upgrade cancelled successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "message": { "type": "string" },
+                    "refundedAmount": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No scheduled upgrade found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "error": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "500": { "description": "Server error" }
         }
       }
     }

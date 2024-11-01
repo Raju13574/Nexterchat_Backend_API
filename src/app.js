@@ -180,8 +180,7 @@ mongoose.connection.on('disconnected', () => {
   console.log('MongoDB disconnected');
 });
 
-require('./cron/subscriptionRenewal');
-require('./cron/applyPromotions');
-require('./cron/cleanupPromotions');
+// Replace the individual cron requires with:
+require('./cron');
 
 module.exports = app;
