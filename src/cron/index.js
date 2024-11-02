@@ -1,5 +1,4 @@
 const cron = require('node-cron');
-const subscriptionRenewal = require('./subscriptionRenewal');
 const applyPromotions = require('./applyPromotions');
 const cleanupPromotions = require('./cleanupPromotions');
 const activateScheduledSubscriptions = require('./subscriptionActivation');
@@ -11,7 +10,6 @@ const activateScheduledSubscriptions = require('./subscriptionActivation');
 cron.schedule('0 * * * *', activateScheduledSubscriptions);
 
 module.exports = {
-  subscriptionRenewal,
   applyPromotions,
   cleanupPromotions,
   activateScheduledSubscriptions

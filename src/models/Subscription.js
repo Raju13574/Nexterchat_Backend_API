@@ -14,7 +14,7 @@ const subscriptionSchema = new mongoose.Schema({
   priceInPaisa: {
     type: Number,
     required: true,
-    min: 0
+    default: 0
   },
   startDate: {
     type: Date,
@@ -36,6 +36,16 @@ const subscriptionSchema = new mongoose.Schema({
         return v === 'Unlimited' || (typeof v === 'number' && v >= 0);
       }
     }
+  },
+  creditsRemaining: {
+    type: Number,
+    default: function() {
+      return typeof this.creditsPerDay === 'number' ? this.creditsPerDay : 0;
+    }
+  },
+  lastCreditReset: {
+    type: Date,
+    default: Date.now
   },
   status: {
     type: String,

@@ -2,10 +2,10 @@ const Execution = require('../models/Execution');
 
 exports.getOverallUsage = async (req, res) => {
   try {
-    const userId = req.user._id; // Get the user ID from the authenticated request
+    const userId = req.user._id;
 
     const usage = await Execution.aggregate([
-      { $match: { user: userId } }, // Match executions for this specific user
+      { $match: { user: userId } },
       {
         $group: {
           _id: { language: '$language', status: '$status' },
@@ -56,11 +56,11 @@ exports.getOverallUsage = async (req, res) => {
 
 exports.getLanguageUsage = async (req, res) => {
   const { language } = req.params;
-  const userId = req.user._id; // Get the user ID from the authenticated request
+  const userId = req.user._id;
   
   try {
     const usage = await Execution.aggregate([
-      { $match: { user: userId, language: language.toLowerCase() } }, // Match executions for this specific user and language
+      { $match: { user: userId, language: language.toLowerCase() } },
       {
         $group: {
           _id: '$status',
@@ -108,90 +108,3 @@ exports.getLanguageUsage = async (req, res) => {
   }
 };
 
-exports.getApiUsageAnalytics = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    const usageData = await Execution.aggregate([
-      { $match: { user: userId, createdAt: { $gte: last7Days } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          calls: { $sum: 1 },
-          errors: {
-            $sum: {
-              $cond: [{ $eq: ["$status", "failed"] }, 1, 0]
-            }
-          }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    const formattedData = usageData.map(item => ({
-      name: item._id,
-      calls: item.calls,
-      errors: item.errors
-    }));
-
-    res.json(formattedData);
-  } catch (error) {
-    console.error('Error in getApiUsageAnalytics:', error);
-    res.status(500).json({ error: 'An error occurred while fetching API usage analytics' });
-  }
-};
-
-exports.getLanguageAnalytics = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    const languageData = await Execution.aggregate([
-      { $match: { user: userId } },
-      {
-        $group: {
-          _id: "$language",
-          value: { $sum: 1 }
-        }
-      }
-    ]);
-
-    const formattedData = languageData.map(item => ({
-      name: item._id,
-      value: item.value
-    }));
-
-    res.json(formattedData);
-  } catch (error) {
-    console.error('Error in getLanguageAnalytics:', error);
-    res.status(500).json({ error: 'An error occurred while fetching language analytics' });
-  }
-};
-
-exports.getPerformanceAnalytics = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    const performanceData = await Execution.aggregate([
-      { $match: { user: userId, createdAt: { $gte: last24Hours } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d %H:00", date: "$createdAt" } },
-          responseTime: { $avg: "$executionTime" }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    const formattedData = performanceData.map(item => ({
-      time: item._id,
-      responseTime: parseFloat(item.responseTime.toFixed(2))
-    }));
-
-    res.json(formattedData);
-  } catch (error) {
-    console.error('Error in getPerformanceAnalytics:', error);
-    res.status(500).json({ error: 'An error occurred while fetching performance analytics' });
-  }
-};

@@ -334,7 +334,8 @@ const cancelSubscription = async (req, res) => {
       amountInPaisa: 0,
       credits: 15,
       description: `Cancelled ${subscription.plan} plan subscription and reverted to free plan`,
-      status: 'completed'
+      status: 'completed',
+      balanceAfter: user.balanceInPaisa
     });
 
     res.json({
@@ -362,45 +363,42 @@ const cancelSubscription = async (req, res) => {
 const getStatus = async (req, res) => {
   try {
     const userId = req.user._id;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Get user and subscription info
-    const user = await User.findById(userId);
     const subscription = await Subscription.findOne({ 
       user: userId, 
       active: true 
     });
 
-    // Get today's executions only after subscription start time
-    const todayUsed = await Execution.countDocuments({
+    // Get today's date at start of day
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Get today's executions count
+    const executionsToday = await Execution.countDocuments({
       user: userId,
       createdAt: { 
-        $gte: subscription ? subscription.startDate : today, // Only count executions after new subscription started
+        $gte: today,
         $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000)
       }
     });
 
-    const creditsPerDay = subscription ? subscription.creditsPerDay : 15;
-    const remainingCredits = Math.max(0, creditsPerDay - todayUsed);
+    // Calculate remaining credits
+    const totalDailyCredits = subscription ? subscription.creditsPerDay : 15;
+    const remainingCredits = Math.max(0, totalDailyCredits - executionsToday);
 
     const response = {
       success: true,
       plan: subscription ? subscription.plan : 'free',
       status: subscription ? subscription.status : 'active',
-      creditsPerDay: creditsPerDay,
-      startDate: subscription ? subscription.startDate : today,
-      endDate: subscription ? subscription.endDate : new Date(today.getTime() + 365 * 24 * 60 * 60 * 1000),
-      todayUsed: todayUsed,
-      remainingCredits: remainingCredits,
-      message: `Your ${subscription ? subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1) : 'Free'} Plan is currently active. You have ${remainingCredits} credits remaining for today. Your daily credit limit is ${creditsPerDay}.`
+      creditsPerDay: totalDailyCredits,
+      creditsRemaining: remainingCredits,
+      validUntil: subscription ? subscription.endDate : null,
+      features: getFeatures(subscription ? subscription.plan : 'free')
     };
 
     res.json(response);
-
   } catch (error) {
     console.error('Error getting subscription status:', error);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       error: 'Failed to get subscription status'
     });
@@ -412,29 +410,74 @@ const downgrade = async (req, res) => {
     const { plan_id } = req.params;
     const userId = req.user._id;
 
-    const newPlan = plans.find(p => p.id === plan_id);
-    if (!newPlan) {
-      return res.status(400).json({ error: 'Invalid plan' });
+    // Get current subscription
+    const currentSubscription = await Subscription.findOne({ 
+      user: userId, 
+      active: true 
+    });
+
+    if (!currentSubscription) {
+      return res.status(400).json({
+        success: false,
+        error: 'No active subscription found'
+      });
     }
 
+    // Get plan details
+    const newPlan = plans.find(p => p.id === plan_id);
+    if (!newPlan) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Invalid plan',
+        availablePlans: plans.map(p => p.id)
+      });
+    }
+
+    // Validate downgrade path
+    const currentTier = planTiers[currentSubscription.plan];
+    const newTier = planTiers[plan_id];
+
+    if (newTier >= currentTier) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot downgrade from ${currentSubscription.plan} to ${plan_id}. Please select a lower tier plan.`,
+        currentPlan: currentSubscription.plan,
+        requestedPlan: plan_id,
+        availableDowngrades: Object.keys(planTiers).filter(plan => planTiers[plan] < currentTier)
+      });
+    }
+
+    // Perform the downgrade
     const newSubscription = await subscriptionService.downgradeSubscription(userId, plan_id);
 
     // Create transaction record
     await Transaction.create({
       user: userId,
-      type: 'downgrade',
-      amount: 0, // No charge for downgrade
-      description: `Downgraded to ${newPlan.name}`,
-      credits: newPlan.id === 'yearly' ? 'Unlimited' : (newSubscription.creditsPerDay * newPlan.duration)
+      type: 'subscription_downgrade',
+      amountInPaisa: 0,
+      description: `Downgraded from ${currentSubscription.plan} to ${plan_id}`,
+      status: 'completed'
     });
 
-    res.json({ 
-      message: 'Subscription downgraded successfully', 
-      subscription: newSubscription
+    return res.json({
+      success: true,
+      message: 'Subscription downgraded successfully',
+      previousPlan: currentSubscription.plan,
+      newSubscription: {
+        plan: newSubscription.plan,
+        startDate: newSubscription.startDate,
+        endDate: newSubscription.endDate,
+        creditsPerDay: newSubscription.creditsPerDay,
+        status: newSubscription.status
+      }
     });
+
   } catch (error) {
     console.error('Downgrade error:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to downgrade subscription'
+    });
   }
 };
 
@@ -507,50 +550,13 @@ const upgrade = async (req, res) => {
     const { plan_id } = req.params;
     const userId = req.user._id;
 
-    // Get current subscription first
+    // Get current subscription and plan details
     const currentSubscription = await Subscription.findOne({ 
       user: userId, 
       active: true,
       endDate: { $gt: new Date() }
     });
 
-    if (!currentSubscription) {
-      return res.status(400).json({
-        success: false,
-        error: 'No active subscription found'
-      });
-    }
-
-    // Check if trying to upgrade to the same plan FIRST
-    if (currentSubscription.plan === plan_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'You are already subscribed to this plan',
-        currentPlan: currentSubscription.plan,
-        endDate: currentSubscription.endDate,
-        remainingDays: Math.ceil((currentSubscription.endDate - new Date()) / (1000 * 60 * 60 * 24))
-      });
-    }
-
-    // Then check for scheduled upgrades
-    const scheduledSubscription = await Subscription.findOne({ 
-      user: userId, 
-      status: 'scheduled'
-    });
-
-    if (scheduledSubscription) {
-      return res.status(400).json({
-        success: false,
-        error: 'You already have a scheduled upgrade',
-        scheduledPlan: {
-          plan: scheduledSubscription.plan,
-          startDate: scheduledSubscription.startDate,
-          endDate: scheduledSubscription.endDate
-        }
-      });
-    }
-
-    // Get plan details
     const newPlan = plans.find(p => p.id === plan_id);
     if (!newPlan) {
       return res.status(400).json({ 
@@ -560,21 +566,50 @@ const upgrade = async (req, res) => {
       });
     }
 
-    // Validate upgrade path
-    const currentTier = planTiers[currentSubscription.plan];
-    const newTier = planTiers[plan_id];
-
-    if (newTier <= currentTier) {
+    // 1. First check if same plan
+    if (currentSubscription && currentSubscription.plan === plan_id) {
       return res.status(400).json({
         success: false,
-        error: `Cannot upgrade from ${currentSubscription.plan} to ${plan_id}. Please select a higher tier plan.`,
-        currentPlan: currentSubscription.plan,
-        requestedPlan: plan_id,
-        availableUpgrades: Object.keys(planTiers).filter(plan => planTiers[plan] > currentTier)
+        error: 'Cannot upgrade to the same plan',
+        message: `You are already subscribed to the ${plan_id} plan`
       });
     }
 
-    // Check balance
+    // 2. Then check for scheduled subscription
+    const existingScheduledSub = await Subscription.findOne({ 
+      user: userId, 
+      status: 'scheduled'
+    });
+
+    if (existingScheduledSub) {
+      if (existingScheduledSub.plan === plan_id) {
+        return res.status(400).json({
+          success: false,
+          error: 'Already scheduled',
+          message: `You already have a scheduled upgrade to ${plan_id} plan`,
+          scheduledPlan: {
+            plan: existingScheduledSub.plan,
+            startDate: existingScheduledSub.startDate,
+            endDate: existingScheduledSub.endDate,
+            status: 'scheduled'
+          }
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: 'Existing schedule',
+        message: `Please cancel your existing scheduled upgrade to ${existingScheduledSub.plan} plan first`,
+        scheduledPlan: {
+          plan: existingScheduledSub.plan,
+          startDate: existingScheduledSub.startDate,
+          endDate: existingScheduledSub.endDate,
+          status: 'scheduled'
+        }
+      });
+    }
+
+    // 3. Only check balance if all other checks pass
     const user = await User.findById(userId);
     if (user.balanceInPaisa < newPlan.priceInPaisa) {
       const shortfall = newPlan.priceInPaisa - user.balanceInPaisa;
@@ -588,21 +623,123 @@ const upgrade = async (req, res) => {
       });
     }
 
-    // Create new subscription with future start date
-    const newSubscription = new Subscription({
+    // Case 1: User is on free plan
+    if (!currentSubscription || currentSubscription.plan === 'free') {
+      // Direct upgrade from free to any paid plan
+      const newSubscription = new Subscription({
+        user: userId,
+        plan: plan_id,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+        creditsPerDay: newPlan.creditsPerDay,
+        priceInPaisa: newPlan.priceInPaisa,
+        status: 'active',
+        active: true
+      });
+
+      await newSubscription.save();
+
+      // Deactivate free plan if exists
+      if (currentSubscription) {
+        currentSubscription.active = false;
+        currentSubscription.status = 'upgraded';
+        await currentSubscription.save();
+      }
+
+      // Update user and create transaction
+      user.balanceInPaisa -= newPlan.priceInPaisa;
+      user.activeSubscription = newSubscription._id;
+      await user.save();
+
+      await Transaction.create({
+        user: userId,
+        type: 'subscription_upgrade',
+        amountInPaisa: newPlan.priceInPaisa,
+        description: `Upgraded from free plan to ${plan_id}`,
+        status: 'completed',
+        balanceAfter: user.balanceInPaisa
+      });
+
+      return res.json({
+        success: true,
+        message: 'Subscription upgraded successfully from free plan',
+        subscription: {
+          plan: newSubscription.plan,
+          startDate: newSubscription.startDate,
+          endDate: newSubscription.endDate,
+          status: 'active',
+          creditsPerDay: newSubscription.creditsPerDay
+        }
+      });
+    }
+
+    // Case 2: User trying to upgrade to same plan
+    if (currentSubscription.plan === plan_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot upgrade to the same plan',
+        message: `You are already subscribed to the ${plan_id} plan`,
+        currentPlan: {
+          plan: currentSubscription.plan,
+          endDate: currentSubscription.endDate,
+          creditsPerDay: currentSubscription.creditsPerDay,
+          status: currentSubscription.status
+        }
+      });
+    }
+
+    // Case 3: Check if user already has a scheduled upgrade
+    const scheduledSubscription = await Subscription.findOne({ 
+      user: userId, 
+      status: 'scheduled'
+    });
+
+    if (scheduledSubscription) {
+      // Add this check for same plan scheduling attempt
+      if (scheduledSubscription.plan === plan_id) {
+        return res.status(400).json({
+          success: false,
+          error: 'Already scheduled',
+          message: `You already have a scheduled upgrade to ${plan_id} plan`,
+          scheduledPlan: {
+            plan: scheduledSubscription.plan,
+            startDate: scheduledSubscription.startDate,
+            endDate: scheduledSubscription.endDate,
+            status: 'scheduled'
+          }
+        });
+      }
+
+      // If trying to schedule a different plan
+      return res.status(400).json({
+        success: false,
+        error: 'Existing schedule',
+        message: `Please cancel your existing scheduled upgrade to ${scheduledSubscription.plan} plan first`,
+        scheduledPlan: {
+          plan: scheduledSubscription.plan,
+          startDate: scheduledSubscription.startDate,
+          endDate: scheduledSubscription.endDate,
+          status: 'scheduled'
+        }
+      });
+    }
+
+    // Case 4: Schedule upgrade for paid plan
+    const scheduledStartDate = currentSubscription.endDate;
+    const scheduledEndDate = new Date(scheduledStartDate.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000));
+
+    const newScheduledSubscription = await Subscription.create({
       user: userId,
       plan: plan_id,
-      startDate: currentSubscription.endDate, // Start when current plan ends
-      endDate: new Date(currentSubscription.endDate.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+      startDate: scheduledStartDate,
+      endDate: scheduledEndDate,
       creditsPerDay: newPlan.creditsPerDay,
       priceInPaisa: newPlan.priceInPaisa,
       status: 'scheduled',
-      active: false // Will be activated when current plan ends
+      active: false
     });
 
-    await newSubscription.save();
-
-    // Deduct balance and create transaction
+    // Deduct payment and create transaction
     user.balanceInPaisa -= newPlan.priceInPaisa;
     await user.save();
 
@@ -610,8 +747,9 @@ const upgrade = async (req, res) => {
       user: userId,
       type: 'subscription_upgrade',
       amountInPaisa: newPlan.priceInPaisa,
-      description: `Scheduled upgrade from ${currentSubscription.plan} to ${plan_id}. Will activate on ${formatDateIST(currentSubscription.endDate)}`,
-      status: 'completed'
+      description: `Scheduled upgrade from ${currentSubscription.plan} to ${plan_id}`,
+      status: 'completed',
+      balanceAfter: user.balanceInPaisa
     });
 
     return res.json({
@@ -623,11 +761,11 @@ const upgrade = async (req, res) => {
         remainingDays: Math.ceil((currentSubscription.endDate - new Date()) / (1000 * 60 * 60 * 24))
       },
       upgradedSubscription: {
-        plan: newSubscription.plan,
-        startDate: newSubscription.startDate,
-        endDate: newSubscription.endDate,
+        plan: newScheduledSubscription.plan,
+        startDate: newScheduledSubscription.startDate,
+        endDate: newScheduledSubscription.endDate,
         status: 'scheduled',
-        creditsPerDay: newSubscription.creditsPerDay
+        creditsPerDay: newScheduledSubscription.creditsPerDay
       }
     });
 
@@ -635,7 +773,7 @@ const upgrade = async (req, res) => {
     console.error('Upgrade error:', error);
     return res.status(500).json({ 
       success: false, 
-      error: error.message || 'Failed to schedule subscription upgrade' 
+      error: error.message || 'Failed to process subscription upgrade' 
     });
   }
 };
@@ -668,7 +806,8 @@ const cancelScheduledUpgrade = async (req, res) => {
       type: 'subscription_cancellation',
       amountInPaisa: scheduledSubscription.priceInPaisa,
       description: `Cancelled scheduled upgrade to ${scheduledSubscription.plan}`,
-      status: 'completed'
+      status: 'completed',
+      balanceAfter: user.balanceInPaisa
     });
 
     // Delete the scheduled subscription - Fixed line
@@ -686,6 +825,54 @@ const cancelScheduledUpgrade = async (req, res) => {
       success: false, 
       error: error.message || 'Failed to cancel scheduled upgrade' 
     });
+  }
+};
+
+// Add this function at the top of the file, after the imports
+const getFeatures = (planType) => {
+  const baseFeatures = [
+    'Code Compilation',
+    'Basic Support',
+    'API Access'
+  ];
+
+  switch (planType) {
+    case 'yearly':
+      return [
+        ...baseFeatures,
+        'Unlimited Daily Credits',
+        'Priority Support',
+        'Custom API Integration',
+        'Advanced Analytics',
+        'Dedicated Account Manager'
+      ];
+    case 'six_month':
+      return [
+        ...baseFeatures,
+        '5000 Daily Credits',
+        'Priority Support',
+        'Custom API Integration',
+        'Advanced Analytics'
+      ];
+    case 'three_month':
+      return [
+        ...baseFeatures,
+        '2500 Daily Credits',
+        'Priority Support',
+        'Basic Analytics'
+      ];
+    case 'monthly':
+      return [
+        ...baseFeatures,
+        '1500 Daily Credits',
+        'Email Support'
+      ];
+    case 'free':
+    default:
+      return [
+        ...baseFeatures,
+        '15 Daily Credits'
+      ];
   }
 };
 

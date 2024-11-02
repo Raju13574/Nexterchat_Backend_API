@@ -16,6 +16,7 @@ const transactionSchema = new mongoose.Schema({
       'subscription_cancellation',
       'subscription_upgrade',
       'subscription_downgrade',
+      'upgrade_cancellation',
       'subscription'
     ],
     required: true
@@ -37,6 +38,10 @@ const transactionSchema = new mongoose.Schema({
     type: String,
     enum: ['pending', 'completed', 'failed'],
     default: 'completed'
+  },
+  balanceAfter: {
+    type: Number,
+    required: true
   }
 }, { 
   timestamps: true,

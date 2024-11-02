@@ -973,13 +973,58 @@
     },
     "/wallet/balance": {
       "get": {
-        "summary": "Get wallet balance",
+        "summary": "Get wallet balance and statistics",
         "tags": ["Wallet"],
         "security": [{ "bearerAuth": [] }],
         "responses": {
-          "200": { "description": "Wallet balance retrieved successfully" },
-          "400": { "description": "Failed to retrieve wallet balance" },
-          "401": { "description": "Unauthorized" }
+          "200": {
+            "description": "Balance retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "balance": {
+                      "type": "integer",
+                      "description": "Current balance in paisa"
+                    },
+                    "balanceInRupees": {
+                      "type": "number",
+                      "description": "Current balance in rupees"
+                    },
+                    "lastBalance": {
+                      "type": "integer",
+                      "description": "Balance 24 hours ago in paisa"
+                    },
+                    "monthlySpend": {
+                      "type": "number",
+                      "description": "Total spend in last 30 days in rupees"
+                    },
+                    "totalDeposits": {
+                      "type": "number",
+                      "description": "Total deposits in rupees"
+                    },
+                    "change24h": {
+                      "type": "object",
+                      "properties": {
+                        "amount": {
+                          "type": "number",
+                          "description": "Change in balance over last 24 hours in rupees"
+                        },
+                        "percentage": {
+                          "type": "string",
+                          "description": "Percentage change in balance over last 24 hours"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "User not found" },
+          "500": { "description": "Server error" }
         }
       }
     },
@@ -1462,15 +1507,22 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "totalExecutions": { "type": "integer" },
-                    "totalCreditsUsed": { "type": "integer" },
+                    "totalExecutions": { 
+                      "type": "integer",
+                      "description": "Total number of code executions"
+                    },
+                    "totalCreditsUsed": { 
+                      "type": "integer",
+                      "description": "Total credits consumed"
+                    },
                     "languageBreakdown": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
                           "language": { "type": "string" },
-                          "count": { "type": "integer" },
+                          "successful": { "type": "integer" },
+                          "failed": { "type": "integer" },
                           "totalCreditsUsed": { "type": "integer" }
                         }
                       }
@@ -1495,7 +1547,8 @@
             "name": "language",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": { "type": "string" },
+            "description": "Programming language to get statistics for"
           }
         ],
         "responses": {
@@ -1507,7 +1560,8 @@
                   "type": "object",
                   "properties": {
                     "language": { "type": "string" },
-                    "count": { "type": "integer" },
+                    "successful": { "type": "integer" },
+                    "failed": { "type": "integer" },
                     "totalCreditsUsed": { "type": "integer" }
                   }
                 }
@@ -1517,90 +1571,6 @@
           "401": { "description": "Unauthorized" },
           "404": { "description": "No usage data found for this language" },
           "500": { "description": "An error occurred while fetching language usage data" }
-        }
-      }
-    },
-    "/usage/api-analytics/usage": {
-      "get": {
-        "summary": "Get API usage analytics",
-        "tags": ["Usage"],
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "API usage analytics retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "name": { "type": "string" },
-                      "calls": { "type": "integer" }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": { "description": "Unauthorized" },
-          "500": { "description": "An error occurred while fetching API usage analytics" }
-        }
-      }
-    },
-    "/usage/api-analytics/languages": {
-      "get": {
-        "summary": "Get language analytics",
-        "tags": ["Usage"],
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "Language analytics retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "name": { "type": "string" },
-                      "value": { "type": "integer" }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": { "description": "Unauthorized" },
-          "500": { "description": "An error occurred while fetching language analytics" }
-        }
-      }
-    },
-    "/usage/api-analytics/performance": {
-      "get": {
-        "summary": "Get performance analytics",
-        "tags": ["Usage"],
-        "security": [{ "bearerAuth": [] }],
-        "responses": {
-          "200": {
-            "description": "Performance analytics retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "properties": {
-                      "time": { "type": "string" },
-                      "responseTime": { "type": "number" }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": { "description": "Unauthorized" },
-          "500": { "description": "An error occurred while fetching performance analytics" }
         }
       }
     },

@@ -16,10 +16,62 @@ exports.getBalance = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Return balance in both paisa and rupees format
+    // Get 24 hours ago timestamp
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const lastMonth = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // Get previous balance (24 hours ago)
+    const previousBalanceTransaction = await Transaction.findOne({
+      user: user._id,
+      createdAt: { $lte: last24Hours }
+    }).sort({ createdAt: -1 });
+
+    // Calculate monthly spend and total deposits
+    const transactions = await Transaction.aggregate([
+      {
+        $match: {
+          user: user._id,
+          createdAt: { $gte: lastMonth }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          monthlySpend: {
+            $sum: {
+              $cond: [
+                { $ne: ['$type', 'deposit'] },
+                '$amountInPaisa',
+                0
+              ]
+            }
+          },
+          totalDeposits: {
+            $sum: {
+              $cond: [
+                { $eq: ['$type', 'deposit'] },
+                '$amountInPaisa',
+                0
+              ]
+            }
+          }
+        }
+      }
+    ]);
+
+    const stats = transactions[0] || { monthlySpend: 0, totalDeposits: 0 };
+
     res.json({ 
-      balance: user.balanceInPaisa || 0,  // Send in paisa
-      balanceInRupees: (user.balanceInPaisa || 0) / 100  // Send in rupees too
+      balance: user.balanceInPaisa || 0,  // Current balance in paisa
+      balanceInRupees: (user.balanceInPaisa || 0) / 100,  // Current balance in rupees
+      lastBalance: previousBalanceTransaction ? previousBalanceTransaction.balanceAfter : user.balanceInPaisa, // Balance 24h ago
+      monthlySpend: stats.monthlySpend / 100, // Monthly spend in rupees
+      totalDeposits: stats.totalDeposits / 100, // Total deposits in rupees
+      change24h: {
+        amount: ((user.balanceInPaisa || 0) - (previousBalanceTransaction?.balanceAfter || 0)) / 100,
+        percentage: previousBalanceTransaction?.balanceAfter ? 
+          (((user.balanceInPaisa - previousBalanceTransaction.balanceAfter) / previousBalanceTransaction.balanceAfter) * 100).toFixed(2) : 0
+      }
     });
   } catch (error) {
     console.error('Error in getBalance:', error);
@@ -52,7 +104,8 @@ exports.addBalance = async (req, res) => {
       type: 'deposit',
       amountInPaisa: amountInPaisa,
       credits: 0,
-      description: `Added ₹${amountInRupees.toFixed(2)} to balance`
+      description: `Added ₹${amountInRupees.toFixed(2)} to balance`,
+      balanceAfter: user.balanceInPaisa
     });
 
     res.json({
@@ -348,14 +401,15 @@ exports.purchaseCredits = async (req, res) => {
     user.credits.purchased += parseInt(credits);
     await user.save();
 
-    // Create transaction record
+    // Create transaction record with balanceAfter
     const transaction = await Transaction.create({
       user: user._id,
       type: 'credit_purchase',
       amountInPaisa: costInPaisa,
       credits: parseInt(credits),
       description: `Purchased ${credits} credits for ₹${(costInPaisa/100).toFixed(2)} (₹0.50 per credit)`,
-      status: 'completed'
+      status: 'completed',
+      balanceAfter: user.balanceInPaisa
     });
 
     return res.json({

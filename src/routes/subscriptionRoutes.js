@@ -24,4 +24,7 @@ router.get('/status', authenticateUser, subscriptionController.getStatus);
 // Get subscription transactions
 router.get('/transactions', authenticateUser, subscriptionController.getSubscriptionTransactions);
 
+// Downgrade subscription
+router.post('/plans/:plan_id/downgrade', authenticateUser, subscriptionController.downgrade);
+
 module.exports = router;

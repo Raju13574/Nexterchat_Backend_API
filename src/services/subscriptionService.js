@@ -220,7 +220,7 @@ exports.handleRequest = async (userId) => {
 exports.upgradeSubscription = async (userId, newPlanId) => {
   try {
     const user = await User.findById(userId);
-    const oldSubscription = await Subscription.findOne({ 
+    const currentSubscription = await Subscription.findOne({ 
       user: userId, 
       active: true 
     });
@@ -228,64 +228,76 @@ exports.upgradeSubscription = async (userId, newPlanId) => {
     const newPlan = plans.find(p => p.id === newPlanId);
     if (!newPlan) throw new Error('Invalid plan selected');
 
-    // Deduct balance from wallet
-    user.balanceInPaisa -= newPlan.priceInPaisa;
-    await user.save();
+    // Check if user is on free plan
+    const isFreePlan = !currentSubscription || currentSubscription.plan === 'free';
 
-    // Create transaction record for the upgrade payment
-    await Transaction.create({
-      user: userId,
-      type: 'subscription_upgrade',
-      amountInPaisa: -newPlan.priceInPaisa, // Negative amount for deduction
-      description: `Upgraded from ${oldSubscription?.plan || 'free'} to ${newPlanId} plan`,
-      status: 'completed'
-    });
+    // If user is on free plan, create immediate subscription
+    if (isFreePlan) {
+      // Deduct balance from wallet
+      user.balanceInPaisa -= newPlan.priceInPaisa;
+      await user.save();
 
-    // Deactivate old subscription
-    if (oldSubscription) {
-      oldSubscription.active = false;
-      oldSubscription.status = 'upgraded';
-      await oldSubscription.save();
-    }
-
-    // Create new subscription
-    const now = new Date();
-    const newSubscription = await Subscription.create({
-      user: userId,
-      plan: newPlanId,
-      priceInPaisa: newPlan.priceInPaisa,
-      creditsPerDay: newPlan.creditsPerDay,
-      startDate: now,
-      endDate: new Date(now.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
-      active: true
-    });
-
-    // Update user's subscription
-    user.activeSubscription = newSubscription._id;
-    await user.save();
-
-    // Mark previous executions
-    await Execution.updateMany(
-      {
+      // Create transaction record
+      await Transaction.create({
         user: userId,
-        createdAt: { 
-          $gte: new Date(now.setHours(0, 0, 0, 0)),
-          $lt: now
-        }
-      },
-      {
-        $set: { 
-          previousPlan: oldSubscription?.plan || 'free',
-          creditSource: 'previous_plan'
-        }
-      }
-    );
+        type: 'subscription_upgrade',
+        amountInPaisa: newPlan.priceInPaisa,
+        description: `Upgraded from free to ${newPlanId} plan`,
+        status: 'completed',
+        balanceAfter: user.balanceInPaisa
+      });
 
-    return {
-      success: true,
-      newSubscription,
-      walletBalance: user.balanceInPaisa / 100 // Return updated wallet balance
-    };
+      // Deactivate free plan if exists
+      if (currentSubscription) {
+        currentSubscription.active = false;
+        currentSubscription.status = 'upgraded';
+        await currentSubscription.save();
+      }
+
+      // Create new active subscription immediately
+      const newSubscription = await Subscription.create({
+        user: userId,
+        plan: newPlanId,
+        priceInPaisa: newPlan.priceInPaisa,
+        creditsPerDay: newPlan.creditsPerDay,
+        startDate: new Date(),
+        endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+        active: true,
+        status: 'active'
+      });
+
+      // Update user's subscription
+      user.activeSubscription = newSubscription._id;
+      await user.save();
+
+      return {
+        success: true,
+        message: 'Subscription upgraded successfully',
+        subscription: newSubscription
+      };
+    } else {
+      // For paid plans, create scheduled subscription
+      const scheduledSubscription = await Subscription.create({
+        user: userId,
+        plan: newPlanId,
+        priceInPaisa: newPlan.priceInPaisa,
+        creditsPerDay: newPlan.creditsPerDay,
+        startDate: currentSubscription.endDate,
+        endDate: new Date(currentSubscription.endDate.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+        active: false,
+        status: 'scheduled'
+      });
+
+      return {
+        success: true,
+        message: 'Subscription upgrade scheduled',
+        scheduledPlan: {
+          plan: newPlanId,
+          startDate: scheduledSubscription.startDate,
+          endDate: scheduledSubscription.endDate
+        }
+      };
+    }
   } catch (error) {
     throw error;
   }

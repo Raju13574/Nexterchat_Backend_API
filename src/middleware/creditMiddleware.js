@@ -133,6 +133,12 @@ const deductCredit = async (req, res, next) => {
       return next();  // Don't deduct any credits for yearly plan
     }
 
+    // Get the user first
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
     // For other plans, deduct credits based on source
     switch (req.creditSource) {
       case 'subscription':
@@ -140,28 +146,49 @@ const deductCredit = async (req, res, next) => {
         break;
 
       case 'purchased':
-        // Only deduct purchased credits if not on yearly plan
-        user.credits.purchased -= 1;
-        await user.save();
+        if (user.credits.purchased > 0) {
+          user.credits.purchased -= 1;
+          await user.save();
+        } else {
+          return res.status(403).json({ 
+            error: 'Insufficient purchased credits',
+            message: 'Please purchase more credits to continue'
+          });
+        }
         break;
 
       case 'granted':
-        user.credits.granted -= 1;
-        await user.save();
+        if (user.credits.granted > 0) {
+          user.credits.granted -= 1;
+          await user.save();
+        } else {
+          return res.status(403).json({ 
+            error: 'Insufficient granted credits'
+          });
+        }
         break;
 
       case 'promotional':
         const promoIndex = user.credits.promotional.findIndex(
           promo => promo._id.toString() === req.promoId.toString()
         );
-        if (promoIndex !== -1) {
+        if (promoIndex !== -1 && user.credits.promotional[promoIndex].credits > 0) {
           user.credits.promotional[promoIndex].credits -= 1;
           await user.save();
+        } else {
+          return res.status(403).json({ 
+            error: 'Insufficient promotional credits'
+          });
         }
         break;
 
+      case 'free':
+        // No deduction needed for free credits
+        break;
+
       default:
-        console.warn(`Unknown credit source: ${req.creditSource}, defaulting to free`);
+        console.warn(`Unknown credit source: ${req.creditSource}`);
+        return res.status(400).json({ error: 'Invalid credit source' });
     }
 
     next();
