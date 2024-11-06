@@ -562,7 +562,10 @@ exports.submitContactForm = async (req, res) => {
 
 exports.getCredits = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('credits');
+    const user = await User.findById(req.user._id)
+      .populate('activeSubscription')
+      .select('credits');
+      
     if (!user) {
       return res.status(404).json({ 
         success: false,
@@ -573,12 +576,19 @@ exports.getCredits = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    // Get active subscription
+    const subscription = await Subscription.findOne({ 
+      user: user._id, 
+      active: true,
+      endDate: { $gt: new Date() }
+    }).sort({ startDate: -1 });
+
     // Get all usage statistics and admin grant in parallel for better performance
     const [todayFreeUsed, purchasedUsed, grantedUsed, adminGrant] = await Promise.all([
       Execution.countDocuments({
         user: user._id,
         createdAt: { $gte: today },
-        creditSource: 'free'
+        creditSource: subscription?.plan === 'free' ? 'free' : 'subscription'
       }),
       Execution.countDocuments({
         user: user._id,
@@ -595,9 +605,10 @@ exports.getCredits = async (req, res) => {
       success: true,
       data: {
         planCredits: {
-          total: user.credits?.free || 15,
+          plan: subscription?.plan === 'free' ? 'Free Plan' : `${subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)} Plan`,
+          total: subscription?.creditsPerDay || 15,
           used: todayFreeUsed,
-          remaining: Math.max(0, (user.credits?.free || 15) - todayFreeUsed)
+          remaining: Math.max(0, (subscription?.creditsPerDay || 15) - todayFreeUsed)
         },
         purchasedCredits: {
           total: user.credits?.purchased || 0,
@@ -617,7 +628,7 @@ exports.getCredits = async (req, res) => {
       };
     }
 
-    // Calculate totals
+    // Calculate totals including all credit types
     const totalCredits = response.data.planCredits.total + 
                         response.data.purchasedCredits.total + 
                         (response.data.grantedCredits?.total || 0);
@@ -647,4 +658,3 @@ exports.getCredits = async (req, res) => {
 console.log('ELASTIC_EMAIL_USER:', process.env.ELASTIC_EMAIL_USER);
 console.log('ELASTIC_EMAIL_PASSWORD:', process.env.ELASTIC_EMAIL_PASSWORD ? 'Set' : 'Not set');
 console.log('ADMIN_EMAIL:', process.env.ADMIN_EMAIL);
-

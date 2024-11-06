@@ -15,9 +15,6 @@ router.post('/plans/:plan_id/upgrade', authenticateUser, subscriptionController.
 // Cancel subscription
 router.post('/cancel', authenticateUser, subscriptionController.cancelSubscription);
 
-// Cancel scheduled upgrade
-router.post('/cancel-scheduled-upgrade', authenticateUser, subscriptionController.cancelScheduledUpgrade);
-
 // Get subscription status
 router.get('/status', authenticateUser, subscriptionController.getStatus);
 

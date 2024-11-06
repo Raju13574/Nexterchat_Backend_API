@@ -30,6 +30,11 @@ const executionSchema = new mongoose.Schema({
   executionTime: {
     type: Number,
     default: 0
+  },
+  planAtTime: {
+    type: String,
+    required: true,
+    default: 'free'
   }
 }, {
   timestamps: true

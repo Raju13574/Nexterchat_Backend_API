@@ -159,18 +159,25 @@ exports.getSubscriptionStatus = async (userId) => {
       }
     });
 
-    const creditsPerDay = subscription.creditsPerDay;
-    const remainingCredits = creditsPerDay - executionsToday;
+    // For paid plans, always show full credits after upgrade
+    let remainingCredits;
+    if (subscription.lastCreditReset > today) {
+      // If credits were reset today (due to upgrade), show full credits
+      remainingCredits = subscription.creditsPerDay;
+    } else {
+      // Normal daily credit calculation
+      remainingCredits = subscription.creditsPerDay - executionsToday;
+    }
 
     return {
       success: true,
       plan: subscription.plan,
       status: subscription.status,
-      creditsPerDay: creditsPerDay,
+      creditsPerDay: subscription.creditsPerDay,
       startDate: subscription.startDate,
       endDate: subscription.endDate,
       remainingCredits: remainingCredits,
-      message: `Your ${subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)} Plan is currently active. You have ${remainingCredits} credits remaining for today. Your daily credit limit is ${creditsPerDay}.`
+      message: `Your ${subscription.plan.charAt(0).toUpperCase() + subscription.plan.slice(1)} Plan is currently active. You have ${remainingCredits} credits remaining for today. Your daily credit limit is ${subscription.creditsPerDay}.`
     };
   } catch (error) {
     console.error('Error getting subscription status:', error);
@@ -220,6 +227,8 @@ exports.handleRequest = async (userId) => {
 exports.upgradeSubscription = async (userId, newPlanId) => {
   try {
     const user = await User.findById(userId);
+    if (!user) throw new Error('User not found');
+
     const currentSubscription = await Subscription.findOne({ 
       user: userId, 
       active: true 
@@ -228,76 +237,64 @@ exports.upgradeSubscription = async (userId, newPlanId) => {
     const newPlan = plans.find(p => p.id === newPlanId);
     if (!newPlan) throw new Error('Invalid plan selected');
 
-    // Check if user is on free plan
-    const isFreePlan = !currentSubscription || currentSubscription.plan === 'free';
-
-    // If user is on free plan, create immediate subscription
-    if (isFreePlan) {
-      // Deduct balance from wallet
-      user.balanceInPaisa -= newPlan.priceInPaisa;
-      await user.save();
-
-      // Create transaction record
-      await Transaction.create({
-        user: userId,
-        type: 'subscription_upgrade',
-        amountInPaisa: newPlan.priceInPaisa,
-        description: `Upgraded from free to ${newPlanId} plan`,
-        status: 'completed',
-        balanceAfter: user.balanceInPaisa
-      });
-
-      // Deactivate free plan if exists
-      if (currentSubscription) {
-        currentSubscription.active = false;
-        currentSubscription.status = 'upgraded';
-        await currentSubscription.save();
-      }
-
-      // Create new active subscription immediately
-      const newSubscription = await Subscription.create({
-        user: userId,
-        plan: newPlanId,
-        priceInPaisa: newPlan.priceInPaisa,
-        creditsPerDay: newPlan.creditsPerDay,
-        startDate: new Date(),
-        endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
-        active: true,
-        status: 'active'
-      });
-
-      // Update user's subscription
-      user.activeSubscription = newSubscription._id;
-      await user.save();
-
-      return {
-        success: true,
-        message: 'Subscription upgraded successfully',
-        subscription: newSubscription
-      };
-    } else {
-      // For paid plans, create scheduled subscription
-      const scheduledSubscription = await Subscription.create({
-        user: userId,
-        plan: newPlanId,
-        priceInPaisa: newPlan.priceInPaisa,
-        creditsPerDay: newPlan.creditsPerDay,
-        startDate: currentSubscription.endDate,
-        endDate: new Date(currentSubscription.endDate.getTime() + (newPlan.duration * 24 * 60 * 60 * 1000)),
-        active: false,
-        status: 'scheduled'
-      });
-
-      return {
-        success: true,
-        message: 'Subscription upgrade scheduled',
-        scheduledPlan: {
-          plan: newPlanId,
-          startDate: scheduledSubscription.startDate,
-          endDate: scheduledSubscription.endDate
-        }
-      };
+    // Case 1: User trying to upgrade to same plan
+    if (currentSubscription && currentSubscription.plan === newPlanId) {
+      throw new Error(`You are already subscribed to the ${newPlanId} plan. Please select a different plan to upgrade.`);
     }
+
+    // Case 2: User has active paid subscription
+    if (currentSubscription && currentSubscription.plan !== 'free') {
+      const now = new Date();
+      if (now < currentSubscription.endDate) {
+        throw new Error(
+          `You have an active ${currentSubscription.plan} plan that expires on ${currentSubscription.endDate.toLocaleDateString()}. ` +
+          `Please wait for your current plan to expire before upgrading.`
+        );
+      }
+    }
+
+    // Check if user has enough balance
+    if (user.balanceInPaisa < newPlan.priceInPaisa) {
+      throw new Error(`Insufficient balance for upgrade. Required: ₹${(newPlan.priceInPaisa/100).toFixed(2)}, Available: ₹${(user.balanceInPaisa/100).toFixed(2)}`);
+    }
+
+    // Deduct balance
+    user.balanceInPaisa -= newPlan.priceInPaisa;
+    await user.save();
+
+    // Deactivate current subscription if exists
+    if (currentSubscription) {
+      currentSubscription.active = false;
+      currentSubscription.status = 'upgraded';
+      currentSubscription.endDate = new Date();
+      await currentSubscription.save();
+    }
+
+    // Create new subscription with FULL credits regardless of previous usage
+    const newSubscription = await Subscription.create({
+      user: userId,
+      plan: newPlanId,
+      priceInPaisa: newPlan.priceInPaisa,
+      creditsPerDay: newPlan.creditsPerDay,
+      // Always give full credits for the new plan
+      creditsRemaining: newPlan.creditsPerDay,
+      startDate: new Date(),
+      endDate: new Date(Date.now() + (newPlan.duration * 24 * 60 * 60 * 1000)),
+      active: true,
+      status: 'active',
+      lastCreditReset: new Date()
+    });
+
+    // Update user's subscription
+    user.activeSubscription = newSubscription._id;
+    await user.save();
+
+    return {
+      success: true,
+      message: 'Subscription upgraded successfully. You now have full credits for your new plan!',
+      subscription: newSubscription
+    };
+
   } catch (error) {
     throw error;
   }
@@ -510,5 +507,63 @@ const cancelAndCreateFreePlan = async (userId) => {
       daysRemaining: Math.ceil((oneYearFromRegistration - new Date()) / (1000 * 60 * 60 * 24))
     }
   };
+};
+
+// Add this function to get transaction history
+exports.getTransactionHistory = async (userId) => {
+  try {
+    const transactions = await Transaction.find({ user: userId })
+      .sort({ createdAt: -1 }) // Sort by newest first
+      .limit(50); // Limit to last 50 transactions
+
+    return transactions.map(transaction => ({
+      _id: transaction._id,
+      type: transaction.type,
+      amountInPaisa: transaction.amountInPaisa,
+      status: transaction.status,
+      description: transaction.description,
+      formattedAmount: `₹${(transaction.amountInPaisa/100).toFixed(2)}`,
+      formattedDate: new Date(transaction.createdAt).toLocaleDateString('en-IN', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }));
+  } catch (error) {
+    console.error('Error fetching transaction history:', error);
+    throw error;
+  }
+};
+
+// Add this function to create transaction records
+exports.createTransactionRecord = async (userId, {
+  type,
+  amountInPaisa,
+  description,
+  status = 'completed',
+  balanceAfter
+}) => {
+  try {
+    // If balanceAfter wasn't provided, fetch it from user
+    if (balanceAfter === undefined) {
+      const user = await User.findById(userId);
+      balanceAfter = user.balanceInPaisa;
+    }
+
+    const transaction = await Transaction.create({
+      user: userId,
+      type,
+      amountInPaisa,
+      description,
+      status,
+      balanceAfter
+    });
+    return transaction;
+  } catch (error) {
+    console.error('Error creating transaction record:', error);
+    throw error;
+  }
 };
 

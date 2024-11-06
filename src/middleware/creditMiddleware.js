@@ -51,8 +51,15 @@ const checkCredits = async (req, res, next) => {
 
       // Only check purchased credits if not on yearly plan
       if (user.credits.purchased > 0) {
-        req.creditSource = 'purchased';
-        return next();
+        const purchasedExecutionsToday = await Execution.countDocuments({
+          user: user._id,
+          creditSource: 'purchased'
+        });
+
+        if (purchasedExecutionsToday < user.credits.purchased) {
+          req.creditSource = 'purchased';
+          return next();
+        }
       }
 
       // 3. Then check granted credits
@@ -91,8 +98,15 @@ const checkCredits = async (req, res, next) => {
 
       // 2. Then check purchased credits
       if (user.credits.purchased > 0) {
-        req.creditSource = 'purchased';
-        return next();
+        const purchasedExecutionsToday = await Execution.countDocuments({
+          user: user._id,
+          creditSource: 'purchased'
+        });
+
+        if (purchasedExecutionsToday < user.credits.purchased) {
+          req.creditSource = 'purchased';
+          return next();
+        }
       }
 
       // 3. Then check granted credits
@@ -128,15 +142,15 @@ const checkCredits = async (req, res, next) => {
 
 const deductCredit = async (req, res, next) => {
   try {
-    // IMPORTANT: Skip deduction for yearly plan users
-    if (req.unlimitedCredits) {
-      return next();  // Don't deduct any credits for yearly plan
-    }
-
     // Get the user first
     const user = await User.findById(req.user._id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Skip credit deduction for unlimited plans
+    if (req.unlimitedCredits) {
+      return next();
     }
 
     // For other plans, deduct credits based on source
@@ -146,10 +160,13 @@ const deductCredit = async (req, res, next) => {
         break;
 
       case 'purchased':
-        if (user.credits.purchased > 0) {
-          user.credits.purchased -= 1;
-          await user.save();
-        } else {
+        // Check again before deducting
+        const purchasedExecutionsToday = await Execution.countDocuments({
+          user: user._id,
+          creditSource: 'purchased'
+        });
+        
+        if (purchasedExecutionsToday >= user.credits.purchased) {
           return res.status(403).json({ 
             error: 'Insufficient purchased credits',
             message: 'Please purchase more credits to continue'
